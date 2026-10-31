@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "BDS Auto Poster - Trợ Lý Đăng Bài Facebook",
+  "version": "1.0.0",
+  "description": "Tự động đăng bài BĐS theo lịch lên các hội nhóm Facebook cá nhân an toàn tuyệt đối.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.facebook.com/*",
+    "http://localhost:3001/*",
+    "https://*.onrender.com/*",
+    "https://*.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "BDS Auto Poster"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.facebook.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
