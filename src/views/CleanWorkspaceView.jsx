@@ -1084,6 +1084,14 @@ Liên hệ: 033.8866.058 ( zalo)`
                     )}
                   </div>
 
+                  {/* Gợi ý tính năng Đăng Chéo Siêu Tốc */}
+                  <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-sky-950/40 border border-sky-800/50 text-xs text-sky-200">
+                    <Zap className="w-4 h-4 text-sky-400 shrink-0 fill-current" />
+                    <span>
+                      <strong>Đăng chéo siêu tốc (+ Thêm nhóm):</strong> Sau khi nạp ảnh và gõ chữ, hệ thống tự động bấm nút <em>"+ Thêm nhóm"</em> bên trong Facebook để chọn thêm tối đa 8 nhóm Khai Sơn khác, đăng 1 lần phủ sóng đồng loạt tất cả các nhóm chỉ trong vài giây!
+                    </span>
+                  </div>
+
                   {/* BẢNG CẤU HÌNH CHỐNG KHÓA NICK (ANTI-SPAM BATCHING & GROQ SPIN) */}
                   <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 mt-2">
                     <div className="flex items-center justify-between">

@@ -328,6 +328,49 @@ class ChromePublishService {
         });
       } catch (_) {}
 
+      // BƯỚC D2: BẤM NÚT "+ THÊM NHÓM" ĐỂ ĐĂNG CHÉO SIÊU TỐC NẾU CÓ
+      const addGroupBtn = dialog.locator([
+        'div[role="button"]:has-text("Thêm nhóm")',
+        'div[aria-label*="Thêm nhóm"]',
+        'div[role="button"]:has-text("Add groups")'
+      ].join(', ')).first();
+
+      let crossPostCount = 0;
+      if (await addGroupBtn.count() > 0 && await addGroupBtn.isVisible()) {
+        console.log('[ChromePublish] Bước D2: Phát hiện nút "+ Thêm nhóm" -> Bấm để chọn đăng chéo siêu tốc...');
+        try {
+          await addGroupBtn.click({ force: true });
+          await page.waitForTimeout(2500);
+
+          // Tìm tất cả các dòng nhóm liên quan (Khai Sơn hoặc các nhóm cư dân trong danh sách gợi ý)
+          const groupSpans = page.locator('span').filter({ hasText: /Khai Sơn|khaison|cư dân|chung cư/i });
+          const totalFound = await groupSpans.count();
+          console.log(`[ChromePublish] Tìm thấy ${totalFound} nhóm liên quan trong danh sách Đăng chéo...`);
+
+          for (let i = 0; i < totalFound && crossPostCount < 8; i++) {
+            try {
+              const item = groupSpans.nth(i);
+              await item.scrollIntoViewIfNeeded();
+              await item.click({ force: true });
+              crossPostCount++;
+              await page.waitForTimeout(300);
+            } catch (_) {}
+          }
+
+          console.log(`[ChromePublish] Đã chọn thêm ${crossPostCount} nhóm để đăng chéo cùng lúc!`);
+
+          // Bấm nút "Xong" để quay lại hộp thoại soạn thảo chính
+          const doneBtn = page.locator('div[role="button"]:has-text("Xong"), div[aria-label="Xong"], div[role="button"]:has-text("Done")').first();
+          if (await doneBtn.count() > 0) {
+            await doneBtn.click({ force: true });
+            await page.waitForTimeout(2500);
+            console.log('[ChromePublish] Đã bấm Xong, quay lại khung soạn bài chính sẵn sàng đăng!');
+          }
+        } catch (crossErr) {
+          console.log('[ChromePublish] Bỏ qua đăng chéo:', crossErr.message);
+        }
+      }
+
       // BƯỚC E: BẤM NÚT ĐĂNG DUY NHẤT 1 LẦN
       console.log('[ChromePublish] Bước E: Tìm nút Đăng và chờ kích hoạt...');
       const submitBtn = dialog.locator([
