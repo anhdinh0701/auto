@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/server.js",
     "build": "vite build",
+    "build:portable": "node build-portable.js",
     "dev": "concurrently \"node server/server.js\" \"vite\"",
     "server": "node server/server.js",
     "client": "vite",

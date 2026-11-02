@@ -50,7 +50,7 @@ export default function CleanWorkspaceView() {
       filename: 'khaison_city_2pn.png',
       originalname: 'Căn hộ Khai Sơn City 2PN 89m2.png',
       url: '/uploads/khaison_city_2pn.png',
-      path: 'D:\\New folder\\uploads\\khaison_city_2pn.png',
+      path: '',
       size: 1004908
     }
   ]);

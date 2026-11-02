@@ -5,7 +5,8 @@ const { chromium } = require('playwright');
 
 class ChromeStationService {
   constructor() {
-    this.userDataDir = 'C:\\bds_chrome_station';
+    const defaultDataDir = path.resolve(__dirname, '../data/chrome_profile');
+    this.userDataDir = process.env.CHROME_USER_DATA_DIR || defaultDataDir;
     this.debugPort = 9222;
     this.endpointUrl = `http://127.0.0.1:${this.debugPort}/json/version`;
     this.activeContext = null;

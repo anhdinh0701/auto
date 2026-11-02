@@ -7,3 +7,4 @@ data/fb_profiles/
 logs/
 .env
 *.log
+BDS_Studio_Portable/
