@@ -8,3 +8,4 @@ logs/
 .env
 *.log
 BDS_Studio_Portable/
+*.zip

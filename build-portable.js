@@ -126,8 +126,8 @@ if not exist "runtime\\node.exe" (
     exit /b 1
 )
 
-:: Tự động bật giao diện ứng dụng trên trình duyệt web sau 2 giây
-start "" powershell -NoProfile -Command "Start-Sleep -Seconds 2; Start-Process 'http://localhost:3001'"
+:: Tự động bật giao diện ứng dụng trên trình duyệt web sau 2 giây (tương thích 100% mọi bản Windows)
+start "" cmd /c "ping 127.0.0.1 -n 3 >nul & start http://localhost:3001"
 
 :: Thiết lập biến môi trường chạy Portable
 set NODE_ENV=production
@@ -198,21 +198,24 @@ const readmeContent = `=========================================================
 2. CÁCH TẮT PHẦN MỀM:
    - Nhấp đúp vào file "Dung_BDS_Studio.bat".
 
-3. KẾT NỐI CHROME TRẠM ĐĂNG BÀI:
+3. KẾT NỐI TRẠM ĐĂNG BÀI (CHROME HOẶC EDGE):
    - Khi vào giao diện, bấm nút "Khởi động Chrome Trạm 24/24" (hoặc khi bấm Đăng bài).
-   - Chrome sẽ mở ra với hồ sơ riêng độc lập lưu tại: app/data/chrome_profile.
-   - Bạn chỉ cần đăng nhập tài khoản Facebook 1 lần duy nhất tại cửa sổ Chrome này. Phiên làm việc sẽ được lưu vĩnh viễn trong thư mục phần mềm.
+   - Hệ thống tự động nhận diện Google Chrome hoặc Microsoft Edge (Edge có sẵn 100% trên mọi máy Windows 10 & 11).
+   - Cửa sổ trình duyệt sẽ mở ra với hồ sơ riêng độc lập lưu tại: app/data/chrome_profile.
+   - Bạn chỉ cần đăng nhập tài khoản Facebook 1 lần duy nhất tại cửa sổ này. Phiên làm việc sẽ được lưu vĩnh viễn trong thư mục phần mềm.
 
-4. TÍNH NĂNG ĐĂNG BÀI & CHỐNG KHÓA NICK:
+4. CÁC TÍNH NĂNG ĐĂNG BÀI:
    - Mục 1: Chọn hoặc tải ảnh căn hộ/nhà đất.
-   - Mục 2: Dán danh sách link nhóm Facebook (KHÔNG GIỚI HẠN số lượng nhóm).
-   - Bật tính năng "Giãn cách thông minh (Smart Delay)" (nghỉ 90s - 180s giữa mỗi nhóm).
-   - Bật tính năng "Groq AI Micro-Spin" để tự động biến tấu câu chào & icon cho từng bài đăng mà vẫn giữ nguyên 100% diện tích, giá và SĐT.
-   - Bấm nút "Bắt đầu đăng" để hệ thống tự động xử lý tuần tự trong nền.
+   - Mục 2: Soạn nội dung & link nhóm:
+     + Đăng chéo siêu tốc (+ Thêm nhóm): Tự động tích chọn cùng lúc tối đa 8-9 nhóm liên quan để phủ sóng đồng loạt chỉ trong vài giây.
+     + Hàng đợi đa nhóm (Multi-Group Queue): Dán danh sách KHÔNG GIỚI HẠN các nhóm Facebook, hệ thống tự động đăng tuần tự trong nền.
+     + Giãn cách thông minh (Smart Delay): Nghỉ ngẫu nhiên 90s - 180s giữa mỗi nhóm để chống khóa nick.
+     + Groq AI Micro-Spin: Tự động đổi nhẹ câu chào & icon cho từng bài nhưng giữ nguyên 100% diện tích, giá và SĐT.
+   - Bấm nút "Bắt đầu đăng" để hệ thống tự động xử lý.
 
 5. ĐẶC ĐIỂM BẢN PORTABLE (MANG ĐI MÁY KHÁC):
-   - Bạn có thể chép toàn bộ thư mục "BDS_Studio_Portable" này sang USB hoặc máy tính Windows khác (Win 10, Win 11).
-   - MÁY TÍNH MỚI HOÀN TOÀN KHÔNG CẦN CÀI ĐẶT NODE.JS (vì động cơ node.exe đã được nhúng sẵn bên trong thư mục runtime/).
+   - Bạn có thể nén ZIP hoặc chép toàn bộ thư mục "BDS_Studio_Portable" này sang USB hoặc máy tính Windows khác (Win 10, Win 11).
+   - MÁY TÍNH MỚI HOÀN TOÀN KHÔNG CẦN CÀI ĐẶT NODE.JS HOẶC BẤT KỲ CÔNG CỤ NÀO KHÁC (động cơ node.exe đã được nhúng sẵn bên trong runtime/).
 ==============================================================================
 `;
 fs.writeFileSync(path.join(portableDir, 'Huong_Dan_Su_Dung.txt'), readmeContent, 'utf8');
