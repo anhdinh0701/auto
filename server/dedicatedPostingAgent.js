@@ -74,7 +74,8 @@ class DedicatedPostingAgent {
         FROM PostingSchedules s
         LEFT JOIN TargetGroups g ON s.group_id = g.id
         LEFT JOIN Properties p ON s.property_id = p.id
-        WHERE s.status = 'Pending' AND datetime(s.scheduled_time) <= datetime(?)
+        WHERE (s.status = 'Pending' OR (s.status = 'Failed' AND (s.retry_count IS NULL OR s.retry_count < 2)))
+          AND datetime(s.scheduled_time) <= datetime(?)
         ORDER BY datetime(s.scheduled_time) ASC
         LIMIT 3
       `).all(nowIso);
@@ -234,15 +235,24 @@ class DedicatedPostingAgent {
         ? `${errorMsg} (Ảnh chụp màn hình: ${path.basename(error.screenshotUrl)})`
         : errorMsg;
 
+      const currentRetry = (schedule.retry_count || 0) + 1;
+      const willRetry = currentRetry < 2;
+      const newStatus = willRetry ? 'Pending' : 'Failed';
+      const nextAttempt = willRetry 
+        ? new Date(Date.now() + 3 * 60 * 1000).toISOString()
+        : schedule.scheduled_time;
+
       db.prepare(`
         UPDATE PostingSchedules SET
-          status = 'Failed',
+          status = ?,
+          scheduled_time = ?,
+          retry_count = ?,
           error_log = ?,
           updated_at = ?
         WHERE id = ?
-      `).run(errorDetail, new Date().toISOString(), scheduleId);
+      `).run(newStatus, nextAttempt, currentRetry, errorDetail, new Date().toISOString(), scheduleId);
 
-      this.logAction(scheduleId, 'AGENT_ERROR', 'FAILED', errorDetail, errorMsg);
+      this.logAction(scheduleId, 'AGENT_ERROR', willRetry ? 'RETRY_SCHEDULED' : 'FAILED', `${errorDetail} - Lần thử ${currentRetry}/2`, errorMsg);
 
       return {
         success: false,

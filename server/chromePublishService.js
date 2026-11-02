@@ -185,9 +185,30 @@ class ChromePublishService {
 
       // 2. Đưa trang lên màn hình và điều hướng tới nhóm
       await page.bringToFront();
+
+      // Đóng tất cả các tab chat Messenger / chathead nổi trước để tránh che khuất giao diện và tránh nhầm lẫn dialog
+      try {
+        await page.evaluate(() => {
+          const closeBtns = document.querySelectorAll(
+            'div[aria-label="Đóng cuộc trò chuyện"], div[aria-label="Close chat"], div[aria-label="Đóng tab trò chuyện"], div[aria-label="Thu nhỏ tab cuộc trò chuyện"], div[aria-label="Thu nhỏ cuộc trò chuyện"]'
+          );
+          closeBtns.forEach(b => b.click());
+        });
+      } catch (_) {}
+
       console.log(`[ChromePublish] Điều hướng tới nhóm: ${cleanGroupUrl}...`);
       await page.goto(cleanGroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(4000);
+
+      // Đóng chat lần 2 sau khi load trang nhóm
+      try {
+        await page.evaluate(() => {
+          const closeBtns = document.querySelectorAll(
+            'div[aria-label="Đóng cuộc trò chuyện"], div[aria-label="Close chat"], div[aria-label="Đóng tab trò chuyện"], div[aria-label="Thu nhỏ tab cuộc trò chuyện"], div[aria-label="Thu nhỏ cuộc trò chuyện"]'
+          );
+          closeBtns.forEach(b => b.click());
+        });
+      } catch (_) {}
 
       // BƯỚC A: Chuyển về tab "Thảo luận" nếu nhóm đang ở tab "Mua bán" (xuất hiện nút "Bạn đang bán gì")
       console.log('[ChromePublish] Bước A: Kiểm tra tab Thảo luận...');
@@ -243,8 +264,11 @@ class ChromePublishService {
         await fallbackTrigger.click({ force: true });
       }
 
-      // Chờ hộp thoại dialog soạn bài hiện lên hoàn toàn (chọn đúng dialog chứa ô soạn thảo contenteditable)
-      const dialog = page.locator('div[role="dialog"]').filter({ has: page.locator('div[contenteditable="true"]') }).first();
+      // Chờ hộp thoại dialog soạn bài hiện lên hoàn toàn:
+      // CHẶN TRIỆT ĐỂ: Dialog phải chứa nút "Đăng" hoặc "Post" (để tuyệt đối KHÔNG bao giờ nhầm với cửa sổ chat Messenger)
+      const dialog = page.locator('div[role="dialog"]').filter({
+        has: page.locator('div[aria-label="Đăng"], div[aria-label="Post"], div[role="button"]:has-text("Đăng"), div[role="button"]:has-text("Post")')
+      }).first();
       await dialog.waitFor({ state: 'visible', timeout: 15000 });
       await page.waitForTimeout(2000);
 
@@ -329,62 +353,65 @@ class ChromePublishService {
       } catch (_) {}
 
       // BƯỚC D2: BẤM NÚT "+ THÊM NHÓM" ĐỂ ĐĂNG CHÉO SIÊU TỐC NẾU CÓ
-      const addGroupBtn = dialog.locator([
-        'div[role="button"]:has-text("Thêm nhóm")',
-        'div[aria-label*="Thêm nhóm"]',
-        'div[role="button"]:has-text("Add groups")'
-      ].join(', ')).first();
+      try {
+        const addGroupBtn = dialog.locator([
+          'div[role="button"]:has-text("Thêm nhóm")',
+          'div[aria-label*="Thêm nhóm"]',
+          'div[role="button"]:has-text("Add groups")'
+        ].join(', ')).first();
 
-      let crossPostCount = 0;
-      if (await addGroupBtn.count() > 0 && await addGroupBtn.isVisible()) {
-        console.log('[ChromePublish] Bước D2: Phát hiện nút "+ Thêm nhóm" -> Bấm để chọn đăng chéo siêu tốc...');
-        try {
+        let crossPostCount = 0;
+        if (await addGroupBtn.count() > 0 && await addGroupBtn.isVisible()) {
+          console.log('[ChromePublish] Bước D2: Phát hiện nút "+ Thêm nhóm" -> Bấm để chọn đăng chéo siêu tốc...');
           await addGroupBtn.click({ force: true });
           await page.waitForTimeout(2500);
 
-          // Tìm tất cả các dòng nhóm liên quan (Khai Sơn hoặc các nhóm cư dân trong danh sách gợi ý)
-          const groupSpans = page.locator('span').filter({ hasText: /Khai Sơn|khaison|cư dân|chung cư/i });
+          // TÌM CÁC NHÓM LIÊN QUAN: CHỈ TÌM BÊN TRONG DIALOG (Tuyệt đối không tìm ngoài page để tránh click vào backdrop đóng mất popup)
+          const groupSpans = dialog.locator('div[role="checkbox"], div[aria-checked], span').filter({ hasText: /Khai Sơn|khaison|cư dân|chung cư/i });
           const totalFound = await groupSpans.count();
-          console.log(`[ChromePublish] Tìm thấy ${totalFound} nhóm liên quan trong danh sách Đăng chéo...`);
+          console.log(`[ChromePublish] Tìm thấy ${totalFound} nhóm liên quan bên trong danh sách Đăng chéo...`);
 
           for (let i = 0; i < totalFound && crossPostCount < 8; i++) {
             try {
               const item = groupSpans.nth(i);
-              await item.scrollIntoViewIfNeeded();
-              await item.click({ force: true });
-              crossPostCount++;
-              await page.waitForTimeout(300);
+              if (await item.isVisible()) {
+                await item.evaluate(el => el.click());
+                crossPostCount++;
+                await page.waitForTimeout(350);
+              }
             } catch (_) {}
           }
 
           console.log(`[ChromePublish] Đã chọn thêm ${crossPostCount} nhóm để đăng chéo cùng lúc!`);
 
-          // Bấm nút "Xong" để quay lại hộp thoại soạn thảo chính
-          const doneBtn = page.locator('div[role="button"]:has-text("Xong"), div[aria-label="Xong"], div[role="button"]:has-text("Done")').first();
+          // Bấm nút "Xong" bên trong dialog để quay lại hộp thoại soạn thảo chính
+          const doneBtn = dialog.locator('div[role="button"]:has-text("Xong"), div[aria-label="Xong"], div[role="button"]:has-text("Done")').first();
           if (await doneBtn.count() > 0) {
-            await doneBtn.click({ force: true });
+            await doneBtn.evaluate(el => el.click());
             await page.waitForTimeout(2500);
             console.log('[ChromePublish] Đã bấm Xong, quay lại khung soạn bài chính sẵn sàng đăng!');
           }
-        } catch (crossErr) {
-          console.log('[ChromePublish] Bỏ qua đăng chéo:', crossErr.message);
         }
+      } catch (crossErr) {
+        console.log('[ChromePublish] Bỏ qua đăng chéo an toàn (không gián đoạn đăng bài chính):', crossErr.message);
       }
 
       // BƯỚC E: BẤM NÚT ĐĂNG DUY NHẤT 1 LẦN
       console.log('[ChromePublish] Bước E: Tìm nút Đăng và chờ kích hoạt...');
       const submitBtn = dialog.locator([
-        'div[aria-label="Đăng"]:not([aria-disabled="true"])',
-        'div[aria-label="Post"]:not([aria-disabled="true"])',
         'div[aria-label="Đăng"][role="button"]',
         'div[aria-label="Post"][role="button"]',
-        'div[role="button"]:has-text("Đăng"):not(:has-text("Đăng nhập"))'
-      ].join(', ')).last();
+        'div[role="button"]:has-text("Đăng"):not(:has-text("Đăng nhập"))',
+        'div[aria-label="Đăng"]:not([aria-disabled="true"])',
+        'div[aria-label="Post"]:not([aria-disabled="true"])',
+        'div[aria-label="Đăng"]',
+        'div[aria-label="Post"]'
+      ].join(', ')).first();
 
       await submitBtn.waitFor({ state: 'visible', timeout: 15000 });
 
       for (let i = 0; i < 20; i++) {
-        const isDisabled = await submitBtn.getAttribute('aria-disabled');
+        const isDisabled = await submitBtn.getAttribute('aria-disabled').catch(() => null);
         if (isDisabled !== 'true') break;
         await page.waitForTimeout(1000);
       }

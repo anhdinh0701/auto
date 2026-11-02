@@ -357,6 +357,7 @@ ensureColumn('PostingSchedules', 'target_time_slot', "TEXT");
 ensureColumn('PostingSchedules', 'jitter_offset_minutes', "INTEGER DEFAULT 0");
 ensureColumn('PostingSchedules', 'opening_hook', "TEXT");
 ensureColumn('PostingSchedules', 'spun_content', "TEXT");
+ensureColumn('PostingSchedules', 'retry_count', "INTEGER DEFAULT 0");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS facebook_oauth_states (
