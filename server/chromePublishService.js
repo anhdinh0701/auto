@@ -225,27 +225,10 @@ class ChromePublishService {
         await fallbackTrigger.click({ force: true });
       }
 
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
 
-      // 5. Nếu có ảnh: Kích hoạt icon Ảnh/video trong dialog rồi nạp file
-      if (imagePaths && imagePaths.length > 0) {
-        console.log(`[ChromePublish] Mở khu vực ảnh và nạp ${imagePaths.length} ảnh đính kèm...`);
-        try {
-          const photoBtn = page.locator('div[role="dialog"] div[aria-label="Ảnh/video"], div[aria-label="Ảnh/video"]').first();
-          await photoBtn.click({ force: true });
-          await page.waitForTimeout(2000);
-        } catch (photoBtnErr) {
-          console.log('[ChromePublish] Nút Ảnh/video mở sẵn hoặc bỏ qua:', photoBtnErr.message);
-        }
-
-        const fileInput = page.locator('div[role="dialog"] input[type="file"], input[type="file"]').last();
-        await fileInput.setInputFiles(imagePaths);
-        console.log('[ChromePublish] Đã nạp file ảnh, chờ 7 giây cho Facebook render ảnh...');
-        await page.waitForTimeout(7000);
-      }
-
-      // 6. Nhập nội dung bài viết vào ô soạn thảo
-      console.log('[ChromePublish] Điền nội dung bài viết vào hộp thoại...');
+      // 5. Nhập văn bản bài viết TRƯỚC TIÊN vào hộp thoại
+      console.log('[ChromePublish] 1. Điền nội dung bài viết vào hộp thoại...');
       const textBox = page.locator([
         'div[role="dialog"] [contenteditable="true"][role="textbox"]',
         '[contenteditable="true"][aria-placeholder*="Tạo bài viết"]',
@@ -256,45 +239,50 @@ class ChromePublishService {
 
       await textBox.waitFor({ state: 'visible', timeout: 15000 });
       await textBox.click({ force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(600);
       await page.keyboard.insertText(cleanContent);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1500);
 
-      // 7. Chọn thêm các nhóm khác (đăng chéo lên đến 10 nhóm cùng lúc nếu có yêu cầu)
-      if (crossPostKeyword) {
+      // 6. Kích hoạt icon Ảnh/video và nạp toàn bộ ảnh đính kèm
+      if (imagePaths && imagePaths.length > 0) {
+        console.log(`[ChromePublish] 2. Kích hoạt khu vực ảnh và nạp ${imagePaths.length} ảnh đính kèm...`);
         try {
-          console.log(`[ChromePublish] Đang tìm nút "+ Thêm nhóm" để chọn các nhóm có từ khóa "${crossPostKeyword}"...`);
-          const addGroupsBtn = page.locator('div[role="dialog"] div[role="button"]:has-text("Thêm nhóm"), div[role="dialog"] span:has-text("Thêm nhóm")').first();
-          if (await addGroupsBtn.count() > 0 && await addGroupsBtn.isVisible()) {
-            await addGroupsBtn.click({ force: true });
-            await page.waitForTimeout(2500);
-
-            const searchInput = page.locator('input[placeholder="Tìm kiếm nhóm"], input[placeholder*="Tìm kiếm nhóm"]').first();
-            if (await searchInput.count() > 0) {
-              await searchInput.click({ force: true });
-              await page.keyboard.insertText(crossPostKeyword);
-              await page.waitForTimeout(2500);
-
-              const rows = page.locator('div[role="dialog"] div[role="button"]').filter({ hasText: new RegExp(crossPostKeyword, 'i') });
-              const rowCount = await rows.count();
-              console.log(`[ChromePublish] Tìm thấy ${rowCount} nhóm có từ khóa "${crossPostKeyword}"!`);
-              const selectLimit = Math.min(rowCount, Math.max(1, maxGroups - 1));
-              for (let i = 0; i < selectLimit; i++) {
-                await rows.nth(i).click({ force: true });
-                await page.waitForTimeout(400);
-              }
-
-              const doneBtn = page.locator('div[aria-label="Xong"], div[role="button"]:has-text("Xong")').last();
-              await doneBtn.click({ force: true });
-              await page.waitForTimeout(2500);
-            }
+          const photoBtn = page.locator('div[role="dialog"] div[aria-label="Ảnh/video"][role="button"], div[aria-label="Ảnh/video"][role="button"]').last();
+          await photoBtn.waitFor({ state: 'visible', timeout: 8000 });
+          const box = await photoBtn.boundingBox();
+          if (box) {
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+          } else {
+            await photoBtn.click({ force: true });
           }
-        } catch (crossPostErr) {
-          console.log('[ChromePublish] Bỏ qua thêm nhóm:', crossPostErr.message);
+          await page.waitForTimeout(2500);
+        } catch (photoBtnErr) {
+          console.log('[ChromePublish] Nút Ảnh/video mở sẵn hoặc fallback:', photoBtnErr.message);
+        }
+
+        const fileInput = page.locator('input[type="file"]').last();
+        await fileInput.setInputFiles(imagePaths);
+        console.log('[ChromePublish] Đã nạp file ảnh, chờ 8 giây cho Facebook render ảnh...');
+        await page.waitForTimeout(8000);
+
+        // Kiểm tra lại văn bản: nếu sau khi Facebook render ảnh mà văn bản bị mất thì gõ lại
+        const currentText = await textBox.innerText().catch(() => '');
+        if (!currentText || currentText.trim().length === 0) {
+          console.log('[ChromePublish] Điền bổ sung lại văn bản sau khi nạp ảnh...');
+          await textBox.click({ force: true });
+          await page.keyboard.insertText(cleanContent);
+          await page.waitForTimeout(1500);
         }
       }
 
-      // 8. Bấm nút Đăng bài
+      // Đóng các cửa sổ chat nổi nếu có để tránh đè nút Đăng
+      try {
+        await page.evaluate(() => {
+          document.querySelectorAll('div[aria-label="Đóng cuộc trò chuyện"], div[aria-label="Close chat"], div[aria-label="Thu nhỏ tab cuộc trò chuyện"]').forEach(b => b.click());
+        });
+      } catch (_) {}
+
+      // 7. Bấm nút Đăng bài
       console.log('[ChromePublish] Tìm nút Đăng và chờ kích hoạt...');
       const submitBtn = page.locator('div[aria-label="Đăng"][role="button"], div[role="button"]:has-text("Đăng"):not(:has-text("Đăng nhập"))').last();
       await submitBtn.waitFor({ state: 'visible', timeout: 15000 });
