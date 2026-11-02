@@ -243,8 +243,8 @@ class ChromePublishService {
         await fallbackTrigger.click({ force: true });
       }
 
-      // Chờ hộp thoại dialog hiện lên hoàn toàn
-      const dialog = page.locator('div[role="dialog"]').last();
+      // Chờ hộp thoại dialog soạn bài hiện lên hoàn toàn (chọn đúng dialog chứa ô soạn thảo contenteditable)
+      const dialog = page.locator('div[role="dialog"]').filter({ has: page.locator('div[contenteditable="true"]') }).first();
       await dialog.waitFor({ state: 'visible', timeout: 15000 });
       await page.waitForTimeout(2000);
 
@@ -252,41 +252,41 @@ class ChromePublishService {
       if (imagePaths && imagePaths.length > 0) {
         console.log(`[ChromePublish] Bước C: NẠP ẢNH TRƯỚC (${imagePaths.length} ảnh)...`);
 
-        let fileInput = dialog.locator('input[type="file"][accept*="image"], input[type="file"]').first();
-        const hasFileInput = (await fileInput.count() > 0) && (await fileInput.isVisible().catch(() => true));
+        let fileInput = dialog.locator('input[type="file"]').first();
+        if (await fileInput.count() === 0) {
+          fileInput = page.locator('div[role="dialog"] input[type="file"]').first();
+        }
 
-        if (!hasFileInput) {
+        if (await fileInput.count() > 0) {
+          console.log('[ChromePublish] Nạp danh sách file ảnh vào input...');
+          await fileInput.setInputFiles(imagePaths);
+        } else {
           console.log('[ChromePublish] Kích hoạt nút Ảnh/video bên trong hộp thoại dialog...');
           const photoBtn = dialog.locator([
             'div[aria-label="Ảnh/video"][role="button"]',
             'div[aria-label="Photo/video"][role="button"]',
+            'div[aria-label*="Ảnh"]',
             'div[role="button"]:has-text("Ảnh/video")',
             'div[role="button"]:has-text("Photo/video")'
           ].join(', ')).first();
 
           try {
             await photoBtn.waitFor({ state: 'visible', timeout: 8000 });
-            const box = await photoBtn.boundingBox();
-            if (box) {
-              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-            } else {
-              await photoBtn.click({ force: true });
-            }
-            await page.waitForTimeout(2500);
+            await photoBtn.click({ force: true });
+            await page.waitForTimeout(2000);
           } catch (btnErr) {
-            console.log('[ChromePublish] Nút Ảnh/video đã mở hoặc bỏ qua:', btnErr.message);
+            console.log('[ChromePublish] Bỏ qua kích hoạt nút ảnh:', btnErr.message);
           }
 
-          fileInput = dialog.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+          fileInput = dialog.locator('input[type="file"]').first();
+          await fileInput.setInputFiles(imagePaths);
         }
 
-        console.log('[ChromePublish] Nạp danh sách file ảnh vào input...');
-        await fileInput.setInputFiles(imagePaths);
         console.log('[ChromePublish] Đã nạp file ảnh, chờ 8-10 giây cho Facebook tải ảnh lên xong...');
         await page.waitForTimeout(8000);
 
         // Chờ nút Đăng hoặc trạng thái loading của ảnh hoàn tất
-        const submitBtnPreview = dialog.locator('div[aria-label="Đăng"][role="button"], div[aria-label="Post"][role="button"]').last();
+        const submitBtnPreview = dialog.locator('div[aria-label="Đăng"][role="button"], div[aria-label="Post"][role="button"]').first();
         for (let w = 0; w < 10; w++) {
           const disabled = await submitBtnPreview.getAttribute('aria-disabled').catch(() => null);
           if (disabled !== 'true') break;

@@ -66,13 +66,15 @@ export default function CleanWorkspaceView() {
   const [activeQueue, setActiveQueue] = useState(null);
   const [isStoppingQueue, setIsStoppingQueue] = useState(false);
 
-  // Mẫu danh sách nhóm BĐS tiện ích
+  // Mẫu danh sách nhóm BĐS tiện ích (chính xác các nhóm Khai Sơn đã tham gia)
   const SAMPLE_KHAISON_GROUPS = [
-    'https://www.facebook.com/groups/1857977624574831?locale=vi_VN',
-    'https://www.facebook.com/groups/cuasoloithoat',
-    'https://www.facebook.com/groups/khaisoncityofficial',
-    'https://www.facebook.com/groups/bds.longbien.hanoi',
-    'https://www.facebook.com/groups/chungcukhaisoncity'
+    'https://www.facebook.com/groups/1857977624574831',
+    'https://www.facebook.com/groups/khaison',
+    'https://www.facebook.com/groups/chungcukhaison',
+    'https://www.facebook.com/groups/1465538037584581',
+    'https://www.facebook.com/groups/737814057734797',
+    'https://www.facebook.com/groups/khaisoncity24h',
+    'https://www.facebook.com/groups/cudankhaisonlongbien'
   ];
 
   const SAMPLE_HANOI_GROUPS = [
@@ -1059,9 +1061,9 @@ Liên hệ: 033.8866.058 ( zalo)`
                       <button
                         type="button"
                         onClick={() => handleAddSampleGroups(SAMPLE_KHAISON_GROUPS)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+                        className="px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 text-xs font-medium border border-emerald-700/60 transition"
                       >
-                        + 5 nhóm Khai Sơn City
+                        + 7 nhóm Khai Sơn đã tham gia
                       </button>
                       <button
                         type="button"
