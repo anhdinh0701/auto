@@ -184,15 +184,10 @@ class DedicatedPostingAgent {
     this.logAction(scheduleId, 'AGENT_START', 'RUNNING', `Bắt đầu quy trình đăng tin theo lịch cho nhóm ${schedule.group_name || groupUrl}`);
 
     try {
-      const crossPostKeyword = schedule.cross_post_keyword || 
-        (/khai sơn/i.test(schedule.group_name || '') || /khai/i.test(postContent) ? 'khai' : null);
-
       const publishResult = await chromePublishService.publishToGroup({
         groupUrl,
         content: postContent,
-        images: imagePaths,
-        crossPostKeyword,
-        maxGroups: 10
+        images: imagePaths
       });
 
       const nowComplete = new Date().toISOString();

@@ -12,6 +12,7 @@ const scheduler = require('./scheduler');
 const dedicatedPostingAgent = require('./dedicatedPostingAgent');
 const chromeStationService = require('./chromeStationService');
 const chromePublishService = require('./chromePublishService');
+const multiGroupQueueService = require('./multiGroupQueueService');
 const connectorRegistry = require('./connectors/ConnectorRegistry');
 const { validateListingLocation, checkChannelLocationMatch } = require('./locationValidator');
 const { uploadsDir, getAbsoluteMediaPath } = require('./mediaHelper');
@@ -625,13 +626,26 @@ app.post('/api/chrome/open-facebook', async (req, res) => {
 const handlePublishRequest = async (req, res) => {
   try {
     const groupUrl = req.body.groupUrl || req.body.group_url;
+    const groupUrls = req.body.groupUrls || req.body.group_urls;
     const content = req.body.content || req.body.post_content;
     const images = req.body.images || req.body.imageFilenames || req.body.image_filenames || [];
     const scheduledTime = req.body.scheduledTime || req.body.scheduled_time;
     const schedules = req.body.schedules; // Hỗ trợ mảng nhiều khung giờ với nội dung riêng
+    const delayMin = req.body.delayMin || req.body.delay_min || 90;
+    const delayMax = req.body.delayMax || req.body.delay_max || 180;
+    const autoSpin = req.body.autoSpin !== undefined ? Boolean(req.body.autoSpin) : true;
 
-    if (!groupUrl || !groupUrl.trim()) {
-      return res.status(400).json({ success: false, connected: false, error: 'Thiếu đường dẫn Nhóm Facebook (groupUrl).' });
+    // Phân tích danh sách link nhóm từ groupUrls hoặc groupUrl (nếu nhập nhiều dòng)
+    let urlList = [];
+    if (groupUrls) {
+      urlList = Array.isArray(groupUrls) ? groupUrls : String(groupUrls).split(/[\r\n,;]+/);
+    } else if (groupUrl) {
+      urlList = String(groupUrl).split(/[\r\n,;]+/);
+    }
+    urlList = Array.from(new Set(urlList.map(u => u.trim()).filter(u => u && u.includes('facebook.com'))));
+
+    if (urlList.length === 0) {
+      return res.status(400).json({ success: false, connected: false, error: 'Thiếu đường dẫn Nhóm Facebook hợp lệ (groupUrl).' });
     }
 
     // 1. Trường hợp lên lịch cho nhiều khung giờ (mỗi khung giờ có nội dung riêng biệt)
@@ -644,13 +658,16 @@ const handlePublishRequest = async (req, res) => {
 
         if (!slotTime || !slotContent || !slotContent.trim()) continue;
 
-        const scheduleResult = await dedicatedPostingAgent.executeDirectPost({
-          group_url: groupUrl.trim(),
-          content: slotContent.trim(),
-          image_filenames: slotImages,
-          scheduled_time: slotTime
-        });
-        createdSchedules.push(scheduleResult);
+        // Lưu cho từng nhóm trong danh sách
+        for (const singleUrl of urlList) {
+          const scheduleResult = await dedicatedPostingAgent.executeDirectPost({
+            group_url: singleUrl,
+            content: slotContent.trim(),
+            image_filenames: slotImages,
+            scheduled_time: slotTime
+          });
+          createdSchedules.push(scheduleResult);
+        }
       }
 
       return res.json({
@@ -659,7 +676,7 @@ const handlePublishRequest = async (req, res) => {
         isBatch: true,
         count: createdSchedules.length,
         schedules: createdSchedules,
-        message: `Đã lên lịch thành công cho ${createdSchedules.length} khung giờ với nội dung riêng biệt!`
+        message: `Đã lên lịch thành công cho ${createdSchedules.length} tác vụ trên ${urlList.length} nhóm Facebook!`
       });
     }
 
@@ -667,10 +684,33 @@ const handlePublishRequest = async (req, res) => {
       return res.status(400).json({ success: false, connected: false, error: 'Nội dung bài viết không được để trống.' });
     }
 
-    // 2. Nếu hẹn 1 khung giờ trong tương lai
+    // 2. Nếu đăng nhiều nhóm HOẶC yêu cầu đưa vào Hàng đợi không giới hạn (Multi-Group Queue)
+    if (urlList.length > 1 || req.body.useQueue || req.body.isQueue) {
+      const batchResult = multiGroupQueueService.createBatch({
+        groupUrls: urlList,
+        content: content.trim(),
+        images,
+        delayMin,
+        delayMax,
+        autoSpin,
+        scheduledTime: scheduledTime && new Date(scheduledTime) > new Date() ? scheduledTime : null
+      });
+
+      return res.json({
+        success: true,
+        isQueue: true,
+        batchId: batchResult.batchId,
+        totalGroups: batchResult.totalGroups,
+        delayMin: batchResult.delayMin,
+        delayMax: batchResult.delayMax,
+        message: batchResult.message
+      });
+    }
+
+    // 3. Nếu hẹn 1 khung giờ đơn lẻ trong tương lai cho 1 nhóm
     if (scheduledTime && new Date(scheduledTime) > new Date()) {
       const scheduleResult = await dedicatedPostingAgent.executeDirectPost({
-        group_url: groupUrl.trim(),
+        group_url: urlList[0],
         content: content.trim(),
         image_filenames: images,
         scheduled_time: scheduledTime
@@ -678,13 +718,11 @@ const handlePublishRequest = async (req, res) => {
       return res.json(scheduleResult);
     }
 
-    // 3. Đăng bài ngay lập tức thông qua Chrome qua Playwright CDP
+    // 4. Đăng ngay lập tức cho 1 nhóm đơn lẻ thông qua Chrome qua Playwright CDP
     const publishResult = await chromePublishService.publishToGroup({
-      groupUrl: groupUrl.trim(),
+      groupUrl: urlList[0],
       content: content.trim(),
-      images,
-      crossPostKeyword: /khai/i.test(groupUrl) || /khai/i.test(content) ? 'khai' : null,
-      maxGroups: 10
+      images
     });
 
     res.json(publishResult);
@@ -697,6 +735,95 @@ const handlePublishRequest = async (req, res) => {
     });
   }
 };
+
+// ---------------- MULTI-GROUP QUEUE API ENDPOINTS ---------------- //
+app.post('/api/publish/batch', (req, res) => {
+  try {
+    const { groupUrls, content, images, delayMin, delayMax, autoSpin, scheduledTime } = req.body;
+    const result = multiGroupQueueService.createBatch({
+      groupUrls,
+      content,
+      images,
+      delayMin,
+      delayMax,
+      autoSpin,
+      scheduledTime
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/publish/queue/active', (req, res) => {
+  try {
+    const status = multiGroupQueueService.getActiveQueue();
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/publish/queue/:batchId', (req, res) => {
+  try {
+    const details = multiGroupQueueService.getBatchDetails(req.params.batchId);
+    if (!details) return res.status(404).json({ success: false, error: 'Không tìm thấy hàng đợi.' });
+    res.json({ success: true, ...details });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/publish/queue/:batchId/stop', (req, res) => {
+  try {
+    const result = multiGroupQueueService.stopBatch(req.params.batchId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Trợ lý AI Bất Động Sản (Chatbot Groq API)
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const { messages = [] } = req.body;
+    const Groq = require('groq-sdk');
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    
+    const modelsToTry = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile'];
+    let reply = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const completion = await groq.chat.completions.create({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content: 'Bạn là Trợ lý AI Bất Động Sản chuyên nghiệp, nhiệt tình, am hiểu thị trường chung cư, nhà phố, đất nền và dự án tại Việt Nam (đặc biệt khu vực Hà Nội như Khai Sơn City Long Biên). Hãy tư vấn ngắn gọn, giật tít thu hút, soạn thảo bài đăng chuyên nghiệp đầy đủ thông tin căn hộ, diện tích, giá và kêu gọi hành động.'
+            },
+            ...messages
+          ],
+          temperature: 0.7,
+          max_tokens: 1024
+        });
+        reply = completion.choices[0]?.message?.content?.trim();
+        if (reply) break;
+      } catch (mErr) {
+        console.warn(`[AIChat] Model ${model} failed: ${mErr.message}`);
+      }
+    }
+
+    if (!reply) {
+      reply = 'Chào bạn! Tôi có thể hỗ trợ bạn viết tiêu đề giật tít, bài đăng bán nhà, cho thuê căn hộ hoặc bài đăng BĐS theo yêu cầu.';
+    }
+
+    res.json({ success: true, reply });
+  } catch (err) {
+    console.error('Chat error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 app.delete('/api/posting-schedules/:id', (req, res) => {
   try {

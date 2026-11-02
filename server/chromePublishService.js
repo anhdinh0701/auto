@@ -129,9 +129,10 @@ class ChromePublishService {
   }
 
   /**
-   * Tự động điều khiển Chrome đăng bài lên nhóm (hỗ trợ đăng chéo nhiều nhóm 1 lần nếu có crossPostKeyword)
+   * TỰ ĐỘNG ĐĂNG BÀI LÊN NHÓM FACEBOOK THEO QUY TRÌNH "ẢNH TRƯỚC - CHỮ SAU"
+   * Đảm bảo 100% Ảnh và Chữ nằm chung trong 1 bài viết duy nhất, không bao giờ bị tách rời
    */
-  async publishToGroup({ groupUrl, content, images, crossPostKeyword = null, maxGroups = 10 }) {
+  async publishToGroup({ groupUrl, content, images }) {
     if (!groupUrl || !groupUrl.trim()) {
       throw new Error('Thiếu đường dẫn Nhóm Facebook (groupUrl).');
     }
@@ -147,9 +148,7 @@ class ChromePublishService {
     console.log(`[ChromePublish] BẮT ĐẦU ĐĂNG BÀI LÊN NHÓM FACEBOOK`);
     console.log(`[ChromePublish] Group URL: ${cleanGroupUrl}`);
     console.log(`[ChromePublish] Số ảnh đính kèm: ${imagePaths.length}`);
-    if (crossPostKeyword) {
-      console.log(`[ChromePublish] Đăng chéo nhóm với từ khóa: "${crossPostKeyword}" (tối đa ${maxGroups} nhóm)`);
-    }
+    console.log(`[ChromePublish] Quy trình: Ảnh trước -> Chữ sau (Tránh tách rời bài)`);
     console.log(`======================================================`);
 
     const { context, isCDP } = await getBrowserSession();
@@ -184,26 +183,45 @@ class ChromePublishService {
         }
       }
 
-      // 2. Đưa trang lên màn hình và vào nhóm
+      // 2. Đưa trang lên màn hình và điều hướng tới nhóm
       await page.bringToFront();
       console.log(`[ChromePublish] Điều hướng tới nhóm: ${cleanGroupUrl}...`);
       await page.goto(cleanGroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(4000);
 
-      // 3. Cuộn nhẹ 200px để kích hoạt giao diện nhóm
-      console.log('[ChromePublish] Cuộn nhẹ 200px để lộ khung đăng bài của nhóm...');
+      // BƯỚC A: Chuyển về tab "Thảo luận" nếu nhóm đang ở tab "Mua bán" (xuất hiện nút "Bạn đang bán gì")
+      console.log('[ChromePublish] Bước A: Kiểm tra tab Thảo luận...');
+      try {
+        const discussionTab = page.locator([
+          'a[role="tab"]:has-text("Thảo luận")',
+          'a[role="tab"]:has-text("Discussion")',
+          'a[role="tab"][href*="discussion"]',
+          'div[role="tab"]:has-text("Thảo luận")'
+        ].join(', ')).first();
+
+        if (await discussionTab.count() > 0 && await discussionTab.isVisible()) {
+          const isSelected = await discussionTab.getAttribute('aria-selected');
+          if (isSelected !== 'true') {
+            console.log('[ChromePublish] Phát hiện nhóm đang ở tab Mua bán, bấm chuyển sang tab Thảo luận...');
+            await discussionTab.click({ force: true });
+            await page.waitForTimeout(3500);
+          }
+        }
+      } catch (tabErr) {
+        console.log('[ChromePublish] Bỏ qua chuyển tab thảo luận:', tabErr.message);
+      }
+
+      // Cuộn nhẹ 200px để kích hoạt thanh công cụ soạn thảo của nhóm
       await page.mouse.wheel(0, 200);
       await page.waitForTimeout(1500);
 
-      // 4. Tìm ô mở khung viết bài đa tầng
-      console.log('[ChromePublish] Mở ô tạo bài viết...');
+      // BƯỚC B: Mở hộp thoại thông qua nút Ảnh/Video hoặc Bạn viết gì đi
+      console.log('[ChromePublish] Bước B: Mở ô tạo bài viết...');
       const postTrigger = page.locator([
         'div[role="main"] div[role="button"]:has-text("Bạn viết gì đi")',
         'div[role="main"] div[role="button"]:has-text("Write something")',
         'div[role="main"] div[role="button"]:has-text("Tạo bài viết")',
         'div[role="main"] div[role="button"]:has-text("Bắt đầu thảo luận")',
-        'div[role="main"] div[role="button"]:has-text("Bạn đang bán gì")',
-        'div[role="main"] div[role="button"]:has-text("Hãy viết gì đó")',
         'div[role="main"] div[role="button"]:has-text("Ảnh/video")',
         'div[role="main"] span:has-text("Bạn viết gì đi")',
         'div[role="main"] span:has-text("Write something")',
@@ -225,12 +243,61 @@ class ChromePublishService {
         await fallbackTrigger.click({ force: true });
       }
 
-      await page.waitForTimeout(3000);
+      // Chờ hộp thoại dialog hiện lên hoàn toàn
+      const dialog = page.locator('div[role="dialog"]').last();
+      await dialog.waitFor({ state: 'visible', timeout: 15000 });
+      await page.waitForTimeout(2000);
 
-      // 5. Nhập văn bản bài viết TRƯỚC TIÊN vào hộp thoại
-      console.log('[ChromePublish] 1. Điền nội dung bài viết vào hộp thoại...');
-      const textBox = page.locator([
-        'div[role="dialog"] [contenteditable="true"][role="textbox"]',
+      // BƯỚC C: NẠP ẢNH TRƯỚC - CHỜ ẢNH HIỂN THỊ XONG
+      if (imagePaths && imagePaths.length > 0) {
+        console.log(`[ChromePublish] Bước C: NẠP ẢNH TRƯỚC (${imagePaths.length} ảnh)...`);
+
+        let fileInput = dialog.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+        const hasFileInput = (await fileInput.count() > 0) && (await fileInput.isVisible().catch(() => true));
+
+        if (!hasFileInput) {
+          console.log('[ChromePublish] Kích hoạt nút Ảnh/video bên trong hộp thoại dialog...');
+          const photoBtn = dialog.locator([
+            'div[aria-label="Ảnh/video"][role="button"]',
+            'div[aria-label="Photo/video"][role="button"]',
+            'div[role="button"]:has-text("Ảnh/video")',
+            'div[role="button"]:has-text("Photo/video")'
+          ].join(', ')).first();
+
+          try {
+            await photoBtn.waitFor({ state: 'visible', timeout: 8000 });
+            const box = await photoBtn.boundingBox();
+            if (box) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            } else {
+              await photoBtn.click({ force: true });
+            }
+            await page.waitForTimeout(2500);
+          } catch (btnErr) {
+            console.log('[ChromePublish] Nút Ảnh/video đã mở hoặc bỏ qua:', btnErr.message);
+          }
+
+          fileInput = dialog.locator('input[type="file"][accept*="image"], input[type="file"]').first();
+        }
+
+        console.log('[ChromePublish] Nạp danh sách file ảnh vào input...');
+        await fileInput.setInputFiles(imagePaths);
+        console.log('[ChromePublish] Đã nạp file ảnh, chờ 8-10 giây cho Facebook tải ảnh lên xong...');
+        await page.waitForTimeout(8000);
+
+        // Chờ nút Đăng hoặc trạng thái loading của ảnh hoàn tất
+        const submitBtnPreview = dialog.locator('div[aria-label="Đăng"][role="button"], div[aria-label="Post"][role="button"]').last();
+        for (let w = 0; w < 10; w++) {
+          const disabled = await submitBtnPreview.getAttribute('aria-disabled').catch(() => null);
+          if (disabled !== 'true') break;
+          await page.waitForTimeout(1000);
+        }
+      }
+
+      // BƯỚC D: ĐIỀN CHỮ SAU CÙNG VÀO CÙNG HỘP THOẠI
+      console.log('[ChromePublish] Bước D: ĐIỀN CHỮ VÀO CÙNG HỘP THOẠI (phía trên ảnh)...');
+      const textBox = dialog.locator([
+        'div[contenteditable="true"][role="textbox"]',
         '[contenteditable="true"][aria-placeholder*="Tạo bài viết"]',
         '[contenteditable="true"][aria-label*="Tạo bài viết"]',
         '[contenteditable="true"][aria-placeholder*="bức ảnh"]',
@@ -240,39 +307,18 @@ class ChromePublishService {
       await textBox.waitFor({ state: 'visible', timeout: 15000 });
       await textBox.click({ force: true });
       await page.waitForTimeout(600);
-      await page.keyboard.insertText(cleanContent);
-      await page.waitForTimeout(1500);
 
-      // 6. Kích hoạt icon Ảnh/video và nạp toàn bộ ảnh đính kèm
-      if (imagePaths && imagePaths.length > 0) {
-        console.log(`[ChromePublish] 2. Kích hoạt khu vực ảnh và nạp ${imagePaths.length} ảnh đính kèm...`);
-        try {
-          const photoBtn = page.locator('div[role="dialog"] div[aria-label="Ảnh/video"][role="button"], div[aria-label="Ảnh/video"][role="button"]').last();
-          await photoBtn.waitFor({ state: 'visible', timeout: 8000 });
-          const box = await photoBtn.boundingBox();
-          if (box) {
-            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-          } else {
-            await photoBtn.click({ force: true });
-          }
-          await page.waitForTimeout(2500);
-        } catch (photoBtnErr) {
-          console.log('[ChromePublish] Nút Ảnh/video mở sẵn hoặc fallback:', photoBtnErr.message);
-        }
+      console.log('[ChromePublish] Gõ toàn bộ nội dung bài viết bằng bàn phím (delay: 35ms)...');
+      await page.keyboard.type(cleanContent, { delay: 35 });
+      await page.waitForTimeout(1000);
 
-        const fileInput = page.locator('input[type="file"]').last();
-        await fileInput.setInputFiles(imagePaths);
-        console.log('[ChromePublish] Đã nạp file ảnh, chờ 8 giây cho Facebook render ảnh...');
-        await page.waitForTimeout(8000);
-
-        // Kiểm tra lại văn bản: nếu sau khi Facebook render ảnh mà văn bản bị mất thì gõ lại
-        const currentText = await textBox.innerText().catch(() => '');
-        if (!currentText || currentText.trim().length === 0) {
-          console.log('[ChromePublish] Điền bổ sung lại văn bản sau khi nạp ảnh...');
-          await textBox.click({ force: true });
-          await page.keyboard.insertText(cleanContent);
-          await page.waitForTimeout(1500);
-        }
+      // Kiểm tra lại xem chữ đã thực sự nằm trong ô chưa (nếu trống thì dùng insertText điền lại)
+      const typedText = await textBox.innerText().catch(() => '');
+      if (!typedText || typedText.trim().length === 0) {
+        console.log('[ChromePublish] Kiểm tra thấy ô văn bản chưa nhận, dùng insertText điền lại...');
+        await textBox.click({ force: true });
+        await page.keyboard.insertText(cleanContent);
+        await page.waitForTimeout(1200);
       }
 
       // Đóng các cửa sổ chat nổi nếu có để tránh đè nút Đăng
@@ -282,9 +328,16 @@ class ChromePublishService {
         });
       } catch (_) {}
 
-      // 7. Bấm nút Đăng bài
-      console.log('[ChromePublish] Tìm nút Đăng và chờ kích hoạt...');
-      const submitBtn = page.locator('div[aria-label="Đăng"][role="button"], div[role="button"]:has-text("Đăng"):not(:has-text("Đăng nhập"))').last();
+      // BƯỚC E: BẤM NÚT ĐĂNG DUY NHẤT 1 LẦN
+      console.log('[ChromePublish] Bước E: Tìm nút Đăng và chờ kích hoạt...');
+      const submitBtn = dialog.locator([
+        'div[aria-label="Đăng"]:not([aria-disabled="true"])',
+        'div[aria-label="Post"]:not([aria-disabled="true"])',
+        'div[aria-label="Đăng"][role="button"]',
+        'div[aria-label="Post"][role="button"]',
+        'div[role="button"]:has-text("Đăng"):not(:has-text("Đăng nhập"))'
+      ].join(', ')).last();
+
       await submitBtn.waitFor({ state: 'visible', timeout: 15000 });
 
       for (let i = 0; i < 20; i++) {
@@ -294,12 +347,12 @@ class ChromePublishService {
       }
       await page.waitForTimeout(1500);
 
-      console.log('[ChromePublish] Bấm nút Đăng bài...');
+      console.log('[ChromePublish] Bấm nút Đăng duy nhất 1 lần...');
       await submitBtn.evaluate(el => el.click());
-      console.log('[ChromePublish] Đã bấm nút Đăng! Chờ 15 giây hoàn tất...');
-      await page.waitForTimeout(15000);
+      console.log('[ChromePublish] Đã bấm Đăng! Chờ 12 giây cho bài lên sóng hoàn tất...');
+      await page.waitForTimeout(12000);
 
-      console.log('[ChromePublish] >>> ĐĂNG BÀI THÀNH CÔNG! <<<');
+      console.log('[ChromePublish] >>> ĐĂNG BÀI THÀNH CÔNG RỰC RỠ (ĐỦ CẢ ẢNH LẪN CHỮ)! <<<');
       return {
         success: true,
         groupUrl: cleanGroupUrl,

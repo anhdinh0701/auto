@@ -30,7 +30,10 @@ import {
   Sun,
   Moon,
   CalendarDays,
-  Timer
+  Timer,
+  Sliders,
+  StopCircle,
+  ListOrdered
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
@@ -55,8 +58,44 @@ export default function CleanWorkspaceView() {
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(null);
   const fileInputRef = useRef(null);
 
-  // ------------------ MỤC 2: SOẠN BÀI & LINK NHÓM ------------------
-  const [groupUrl, setGroupUrl] = useState('https://www.facebook.com/groups/1857977624574831?locale=vi_VN');
+  // ------------------ MỤC 2: SOẠN BÀI & LINK NHÓM (MULTI-GROUP QUEUE) ------------------
+  const [groupUrlsText, setGroupUrlsText] = useState('https://www.facebook.com/groups/1857977624574831?locale=vi_VN');
+  const [delayMin, setDelayMin] = useState(90);
+  const [delayMax, setDelayMax] = useState(180);
+  const [autoSpin, setAutoSpin] = useState(true);
+  const [activeQueue, setActiveQueue] = useState(null);
+  const [isStoppingQueue, setIsStoppingQueue] = useState(false);
+
+  // Mẫu danh sách nhóm BĐS tiện ích
+  const SAMPLE_KHAISON_GROUPS = [
+    'https://www.facebook.com/groups/1857977624574831?locale=vi_VN',
+    'https://www.facebook.com/groups/cuasoloithoat',
+    'https://www.facebook.com/groups/khaisoncityofficial',
+    'https://www.facebook.com/groups/bds.longbien.hanoi',
+    'https://www.facebook.com/groups/chungcukhaisoncity'
+  ];
+
+  const SAMPLE_HANOI_GROUPS = [
+    'https://www.facebook.com/groups/batdongsanhanoi24h',
+    'https://www.facebook.com/groups/chothuenhadathanoi',
+    'https://www.facebook.com/groups/bds.thudo.hanoi',
+    'https://www.facebook.com/groups/muabanbatdongsanhanoi',
+    'https://www.facebook.com/groups/hoi.cu.dan.long.bien'
+  ];
+
+  // Trích xuất danh sách link hợp lệ (mỗi dòng 1 link)
+  const parsedGroupUrls = groupUrlsText
+    .split(/[\r\n,;]+/)
+    .map(u => u.trim())
+    .filter(u => u && u.includes('facebook.com'));
+
+  const handleAddSampleGroups = (sampleList) => {
+    const existing = groupUrlsText.split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean);
+    const combined = Array.from(new Set([...existing, ...sampleList]));
+    setGroupUrlsText(combined.join('\n'));
+    addToast(`Đã thêm ${sampleList.length} nhóm vào danh sách!`, 'success');
+  };
+
   const [postContent, setPostContent] = useState(`Em cần Cho thuê căn 2PN 89m2 Khai Sơn City giá 11triệu full đồ ạ.
 Tầng đẹp nhà đang trống nhận nhà luôn
 Liên hệ: 033.8866.058 ( zalo)`);
@@ -296,14 +335,42 @@ Liên hệ: 033.8866.058 ( zalo)`
   const [chatLoading, setChatLoading] = useState(false);
   const chatMessagesEndRef = useRef(null);
 
+  // Lấy dữ liệu tiến độ hàng đợi nhiều nhóm chạy ngầm
+  const fetchActiveQueue = async () => {
+    try {
+      const res = await fetch('/api/publish/queue/active');
+      if (!res.ok) return;
+      const data = await res.json();
+      setActiveQueue(data);
+    } catch (_) {}
+  };
+
+  // Dừng khẩn cấp hàng đợi
+  const handleStopQueue = async (batchId) => {
+    if (!batchId) return;
+    setIsStoppingQueue(true);
+    try {
+      const res = await fetch(`/api/publish/queue/${batchId}/stop`, { method: 'POST' });
+      const data = await res.json();
+      addToast(data.message || 'Đã gửi lệnh dừng hàng đợi!', 'info');
+      await fetchActiveQueue();
+    } catch (err) {
+      addToast('Lỗi dừng hàng đợi: ' + err.message, 'error');
+    } finally {
+      setIsStoppingQueue(false);
+    }
+  };
+
   useEffect(() => {
     checkChromeStation(true);
     fetchPendingSchedules();
-    // Tự động kiểm tra trạng thái mỗi 5 giây
+    fetchActiveQueue();
+    // Tự động kiểm tra trạng thái mỗi 3 giây
     const interval = setInterval(() => {
       checkChromeStation(true);
       fetchPendingSchedules();
-    }, 5000);
+      fetchActiveQueue();
+    }, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -419,14 +486,10 @@ Liên hệ: 033.8866.058 ( zalo)`
     }
   };
 
-  // ==================== ĐĂNG BÀI THẬT (DIRECT POST) ====================
+  // ==================== ĐĂNG BÀI THẬT (DIRECT POST & MULTI-GROUP QUEUE) ====================
   const handleDirectPost = async () => {
-    if (!groupUrl.trim()) {
-      addToast('Vui lòng nhập Link Nhóm Facebook cần đăng bài!', 'error');
-      return;
-    }
-    if (!groupUrl.includes('facebook.com')) {
-      addToast('Đường dẫn nhóm Facebook không hợp lệ!', 'error');
+    if (parsedGroupUrls.length === 0) {
+      addToast('Vui lòng nhập ít nhất 1 Link Nhóm Facebook hợp lệ!', 'error');
       return;
     }
 
@@ -443,7 +506,7 @@ Liên hệ: 033.8866.058 ( zalo)`
       }
 
       setIsPosting(true);
-      setPostingProgress(`Đang tạo lịch đăng tự động cho ${validSlots.length} khung giờ...`);
+      setPostingProgress(`Đang tạo lịch đăng tự động cho ${validSlots.length} khung giờ trên ${parsedGroupUrls.length} nhóm...`);
       setLastPostResult(null);
 
       try {
@@ -457,7 +520,7 @@ Liên hệ: 033.8866.058 ( zalo)`
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            groupUrl: groupUrl.trim(),
+            groupUrls: parsedGroupUrls,
             images: imageFilenames,
             schedules: schedulesPayload
           })
@@ -467,13 +530,12 @@ Liên hệ: 033.8866.058 ( zalo)`
         setLastPostResult(data);
 
         if (data.success) {
-          addToast(`Đã lên lịch thành công cho ${validSlots.length} khung giờ! Hệ thống sẽ tự động đăng bài theo từng giờ với nội dung riêng.`, 'success');
+          addToast(`Đã lên lịch thành công cho ${data.count || validSlots.length} tác vụ trên ${parsedGroupUrls.length} nhóm!`, 'success');
           
-          // Thêm từng khung giờ vào nhật ký phiên
           const newEntries = validSlots.map((slot, idx) => ({
             id: `${postRecordId}-${idx}`,
             time: submissionTime,
-            groupUrl: groupUrl.trim(),
+            groupUrl: `${parsedGroupUrls.length} nhóm BĐS`,
             contentSnippet: slot.content.trim().substring(0, 100) + (slot.content.length > 100 ? '...' : ''),
             imageCount: imageFilenames.length,
             mode: `Hẹn giờ (${slot.time.replace('T', ' ')})`,
@@ -499,7 +561,7 @@ Liên hệ: 033.8866.058 ( zalo)`
       return;
     }
 
-    // 2. CHẾ ĐỘ ĐĂNG NGAY HOẶC HẸN 1 KHUNG GIỜ
+    // 2. CHẾ ĐỘ ĐĂNG NGAY HOẶC HẸN 1 KHUNG GIỜ (HỖ TRỢ QUEUE ĐA NHÓM)
     if (!postContent.trim()) {
       addToast('Vui lòng nhập nội dung bài viết trước khi đăng!', 'error');
       return;
@@ -510,7 +572,9 @@ Liên hệ: 033.8866.058 ( zalo)`
     }
 
     setIsPosting(true);
-    setPostingProgress('Đang gửi lệnh đăng bài tới Chrome Laptop...');
+    setPostingProgress(parsedGroupUrls.length > 1 
+      ? `Đang đẩy ${parsedGroupUrls.length} nhóm vào Hàng đợi và khởi động Chrome...` 
+      : 'Đang gửi lệnh đăng bài tới Chrome Laptop...');
     setLastPostResult(null);
 
     try {
@@ -518,9 +582,12 @@ Liên hệ: 033.8866.058 ( zalo)`
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          groupUrl: groupUrl.trim(),
+          groupUrls: parsedGroupUrls,
           content: postContent.trim(),
           images: imageFilenames,
+          delayMin: Number(delayMin) || 90,
+          delayMax: Number(delayMax) || 180,
+          autoSpin: Boolean(autoSpin),
           scheduledTime: postTimingMode === 'schedule' ? scheduledDateTime : null
         })
       });
@@ -528,35 +595,56 @@ Liên hệ: 033.8866.058 ( zalo)`
       const data = await res.json();
       setLastPostResult(data);
 
-      const errSsMatch = data.error?.match(/error-publish-[0-9]+\.png/);
-      const ssUrl = data.screenshotUrl || (errSsMatch ? `/logs/errors/${errSsMatch[0]}` : null);
+      if (data.isQueue) {
+        addToast(`🚀 Đã kích hoạt Hàng đợi đăng ${data.totalGroups} nhóm tự động! Tự động giãn cách an toàn chống spam.`, 'success');
+        await fetchActiveQueue();
 
-      const newHistoryItem = {
-        id: postRecordId,
-        time: submissionTime,
-        groupUrl: groupUrl.trim(),
-        contentSnippet: postContent.trim().substring(0, 100) + (postContent.length > 100 ? '...' : ''),
-        imageCount: imageFilenames.length,
-        mode: postTimingMode === 'schedule' ? 'Hẹn 1 giờ' : 'Đăng ngay',
-        scheduledTime: postTimingMode === 'schedule' ? scheduledDateTime : null,
-        success: data.success,
-        statusText: data.success ? (data.isScheduled ? 'Đã lên lịch' : 'Thành công') : 'Thất bại',
-        error: data.error || null,
-        screenshotUrl: ssUrl,
-        postUrl: data.post_url || null
-      };
-
-      setPostHistory(prev => [newHistoryItem, ...prev]);
-
-      if (data.success) {
-        if (data.isScheduled) {
-          addToast(data.message || 'Đã lên lịch đăng bài thành công!', 'success');
-          fetchPendingSchedules();
-        } else {
-          addToast('Đã đăng bài thành công lên Facebook trên laptop của bạn!', 'success');
-        }
+        const newHistoryItem = {
+          id: postRecordId,
+          time: submissionTime,
+          groupUrl: `${data.totalGroups} nhóm Facebook (Hàng đợi)`,
+          contentSnippet: postContent.trim().substring(0, 100) + (postContent.length > 100 ? '...' : ''),
+          imageCount: imageFilenames.length,
+          mode: `Hàng đợi (${data.totalGroups} nhóm | Nghỉ ${data.delayMin}-${data.delayMax}s)`,
+          scheduledTime: null,
+          success: true,
+          statusText: 'Đang chạy hàng đợi',
+          error: null,
+          screenshotUrl: null,
+          postUrl: null
+        };
+        setPostHistory(prev => [newHistoryItem, ...prev]);
       } else {
-        addToast(data.error || 'Đăng bài thất bại.', 'error');
+        const errSsMatch = data.error?.match(/error-publish-[0-9]+\.png/);
+        const ssUrl = data.screenshotUrl || (errSsMatch ? `/logs/errors/${errSsMatch[0]}` : null);
+
+        const newHistoryItem = {
+          id: postRecordId,
+          time: submissionTime,
+          groupUrl: parsedGroupUrls[0],
+          contentSnippet: postContent.trim().substring(0, 100) + (postContent.length > 100 ? '...' : ''),
+          imageCount: imageFilenames.length,
+          mode: postTimingMode === 'schedule' ? 'Hẹn 1 giờ' : 'Đăng ngay',
+          scheduledTime: postTimingMode === 'schedule' ? scheduledDateTime : null,
+          success: data.success,
+          statusText: data.success ? (data.isScheduled ? 'Đã lên lịch' : 'Thành công') : 'Thất bại',
+          error: data.error || null,
+          screenshotUrl: ssUrl,
+          postUrl: data.post_url || null
+        };
+
+        setPostHistory(prev => [newHistoryItem, ...prev]);
+
+        if (data.success) {
+          if (data.isScheduled) {
+            addToast(data.message || 'Đã lên lịch đăng bài thành công!', 'success');
+            fetchPendingSchedules();
+          } else {
+            addToast('Đã đăng bài thành công lên Facebook trên laptop của bạn!', 'success');
+          }
+        } else {
+          addToast(data.error || 'Đăng bài thất bại.', 'error');
+        }
       }
     } catch (err) {
       addToast('Lỗi thực thi: ' + err.message, 'error');
@@ -565,7 +653,7 @@ Liên hệ: 033.8866.058 ( zalo)`
         {
           id: postRecordId,
           time: submissionTime,
-          groupUrl: groupUrl.trim(),
+          groupUrl: `${parsedGroupUrls.length} nhóm`,
           contentSnippet: postContent.trim().substring(0, 100),
           imageCount: imageFilenames.length,
           mode: postTimingMode === 'schedule' ? 'Hẹn 1 giờ' : 'Đăng ngay',
@@ -941,19 +1029,139 @@ Liên hệ: 033.8866.058 ( zalo)`
               
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-7 space-y-6">
                 
-                {/* 1. Nhập URL Nhóm */}
-                <div className="space-y-2">
-                  <label className="block text-sm font-bold text-white flex items-center justify-between">
-                    <span>1. Đường dẫn Nhóm Facebook mục tiêu (Group URL):</span>
-                    <span className="text-xs text-emerald-400 font-normal">Đăng trực tiếp qua tài khoản Chrome laptop</span>
-                  </label>
-                  <input
-                    type="url"
-                    value={groupUrl}
-                    onChange={(e) => setGroupUrl(e.target.value)}
-                    placeholder="Ví dụ: https://www.facebook.com/groups/batdongsanhanoi hoặc https://www.facebook.com/groups/123456789"
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-hidden focus:border-emerald-500 transition"
+                {/* 1. Danh sách Nhóm Facebook mục tiêu (Multi-Group Queue) */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-bold text-white flex items-center gap-2">
+                      <ListOrdered className="w-4 h-4 text-emerald-400" />
+                      <span>1. Danh sách Nhóm Facebook mục tiêu (Multi-Group Queue):</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-600/50">
+                        {parsedGroupUrls.length} nhóm hợp lệ
+                      </span>
+                      <span className="text-xs text-slate-400 hidden sm:inline">Không giới hạn số lượng</span>
+                    </div>
+                  </div>
+
+                  <textarea
+                    rows={4}
+                    value={groupUrlsText}
+                    onChange={(e) => setGroupUrlsText(e.target.value)}
+                    placeholder="Dán danh sách các link nhóm Facebook vào đây (mỗi dòng 1 link nhóm). Ví dụ:&#10;https://www.facebook.com/groups/1857977624574831&#10;https://www.facebook.com/groups/batdongsanhanoi...&#10;Hệ thống hỗ trợ KHÔNG GIỚI HẠN số lượng nhóm, tự động đăng tuần tự và chống spam!"
+                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-xs font-mono focus:outline-hidden focus:border-emerald-500 transition leading-relaxed"
                   />
+
+                  {/* Nút nạp nhóm nhanh */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-slate-400 text-[11px]">Nạp nhanh nhóm mẫu:</span>
+                      <button
+                        type="button"
+                        onClick={() => handleAddSampleGroups(SAMPLE_KHAISON_GROUPS)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+                      >
+                        + 5 nhóm Khai Sơn City
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddSampleGroups(SAMPLE_HANOI_GROUPS)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+                      >
+                        + 5 nhóm BĐS Hà Nội
+                      </button>
+                    </div>
+                    {groupUrlsText.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setGroupUrlsText('')}
+                        className="text-slate-400 hover:text-rose-400 text-xs transition"
+                      >
+                        Xóa danh sách link
+                      </button>
+                    )}
+                  </div>
+
+                  {/* BẢNG CẤU HÌNH CHỐNG KHÓA NICK (ANTI-SPAM BATCHING & GROQ SPIN) */}
+                  <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">Cơ chế bảo vệ tài khoản & Chống khóa nick khi đăng &gt;10 nhóm</span>
+                      </div>
+                      <span className="text-[11px] text-emerald-400 font-mono">Anti-Spam Engine Active</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                      {/* Giãn cách thông minh */}
+                      <div className="space-y-1.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+                        <label className="text-xs font-semibold text-slate-200 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Timer className="w-3.5 h-3.5 text-amber-400" />
+                            Giãn cách thông minh (Smart Delay):
+                          </span>
+                          <span className="text-[11px] text-amber-400 font-mono">{delayMin}s - {delayMax}s</span>
+                        </label>
+                        <p className="text-[11px] text-slate-400">
+                          Nghỉ ngẫu nhiên giữa 2 nhóm liên tiếp để mô phỏng người thật thao tác.
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <div className="flex-1 flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded border border-slate-700 text-xs text-white">
+                            <span className="text-slate-400 text-[10px]">Từ:</span>
+                            <input
+                              type="number"
+                              min={10}
+                              max={600}
+                              value={delayMin}
+                              onChange={(e) => setDelayMin(Math.max(10, parseInt(e.target.value) || 10))}
+                              className="w-12 bg-transparent text-white font-mono text-xs focus:outline-hidden text-center"
+                            />
+                            <span className="text-slate-400 text-[10px]">giây</span>
+                          </div>
+                          <span className="text-slate-500 text-xs">→</span>
+                          <div className="flex-1 flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded border border-slate-700 text-xs text-white">
+                            <span className="text-slate-400 text-[10px]">Đến:</span>
+                            <input
+                              type="number"
+                              min={20}
+                              max={900}
+                              value={delayMax}
+                              onChange={(e) => setDelayMax(Math.max(delayMin, parseInt(e.target.value) || 180))}
+                              className="w-12 bg-transparent text-white font-mono text-xs focus:outline-hidden text-center"
+                            />
+                            <span className="text-slate-400 text-[10px]">giây</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Groq AI Micro-Spin */}
+                      <div className="space-y-1.5 p-3 rounded-lg bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
+                        <div>
+                          <label className="cursor-pointer flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={autoSpin}
+                              onChange={(e) => setAutoSpin(e.target.checked)}
+                              className="mt-0.5 rounded text-emerald-500 focus:ring-emerald-500"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                                Tự động biến tấu Groq AI (Micro-Spin)
+                              </span>
+                              <p className="text-[11px] text-slate-400 leading-tight">
+                                Tự động đảo nhẹ câu chào & icon cho từng nhóm để mỗi nhóm là 1 mã băm khác nhau, giữ nguyên 100% giá, diện tích & SĐT.
+                              </p>
+                            </div>
+                          </label>
+                        </div>
+                        <div className="text-[10px] text-emerald-400/90 font-mono flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Mô hình: Groq Llama-3.3-70b-versatile
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 2. Khung soạn thảo bài viết */}
@@ -1307,15 +1515,151 @@ Liên hệ: 033.8866.058 ( zalo)`
                         <Zap className="w-5 h-5 fill-current" />
                         <span>
                           {postTimingMode === 'multi_schedule'
-                            ? `📅 LÊN LỊCH ĐĂNG CHO ${timeSlots.length} KHUNG GIỜ`
+                            ? `📅 LÊN LỊCH ĐĂNG CHO ${timeSlots.length} KHUNG GIỜ (${parsedGroupUrls.length} NHÓM)`
                             : postTimingMode === 'schedule'
-                            ? '⏰ HẸN GIỜ ĐĂNG 1 BÀI'
+                            ? `⏰ HẸN GIỜ ĐĂNG CHO ${parsedGroupUrls.length} NHÓM`
+                            : parsedGroupUrls.length > 1
+                            ? `🚀 BẮT ĐẦU ĐĂNG ${parsedGroupUrls.length} NHÓM (HÀNG ĐỢI TỰ ĐỘNG)`
                             : '🚀 ĐĂNG BÀI NGAY BẰNG CHROME LAPTOP'}
                         </span>
                       </>
                     )}
                   </button>
                 </div>
+
+                {/* TIẾN ĐỘ HÀNG ĐỢI CHẠY NGẦM (MULTI-GROUP QUEUE PROGRESS) */}
+                {activeQueue?.batch && (
+                  <div className={`p-5 rounded-2xl border transition-all ${
+                    activeQueue.batch.status === 'running'
+                      ? 'bg-emerald-950/30 border-emerald-500/70 shadow-xl shadow-emerald-950/40'
+                      : activeQueue.batch.status === 'stopped'
+                      ? 'bg-amber-950/30 border-amber-600/60'
+                      : activeQueue.batch.status === 'completed'
+                      ? 'bg-slate-900 border-slate-700'
+                      : 'bg-rose-950/30 border-rose-600/60'
+                  }`}>
+                    {/* Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-3 h-3 rounded-full ${
+                          activeQueue.batch.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'
+                        }`} />
+                        <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                          <span>Tiến độ Hàng đợi đăng đa nhóm:</span>
+                          <span className="font-mono text-emerald-300">
+                            {activeQueue.batch.completed_groups + activeQueue.batch.failed_groups}/{activeQueue.batch.total_groups} nhóm
+                          </span>
+                        </h4>
+                        <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold uppercase font-mono tracking-wider border ${
+                          activeQueue.batch.status === 'running'
+                            ? 'bg-emerald-900/60 text-emerald-300 border-emerald-600/60'
+                            : activeQueue.batch.status === 'stopped'
+                            ? 'bg-amber-900/60 text-amber-300 border-amber-600/60'
+                            : 'bg-slate-800 text-slate-300 border-slate-700'
+                        }`}>
+                          {activeQueue.batch.status === 'running' ? 'Đang chạy ngầm' : activeQueue.batch.status === 'stopped' ? 'Đã dừng' : 'Hoàn tất'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold font-mono text-emerald-400">
+                          {Math.round(((activeQueue.batch.completed_groups + activeQueue.batch.failed_groups) / Math.max(1, activeQueue.batch.total_groups)) * 100)}%
+                        </span>
+
+                        {activeQueue.batch.status === 'running' && (
+                          <button
+                            type="button"
+                            onClick={() => handleStopQueue(activeQueue.batch.id)}
+                            disabled={isStoppingQueue}
+                            className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow"
+                          >
+                            <StopCircle className="w-3.5 h-3.5" />
+                            <span>{isStoppingQueue ? 'Đang dừng...' : 'Dừng khẩn cấp'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden mb-3 border border-slate-800">
+                      <div
+                        className="bg-emerald-500 h-full transition-all duration-500 rounded-full"
+                        style={{
+                          width: `${Math.round(((activeQueue.batch.completed_groups + activeQueue.batch.failed_groups) / Math.max(1, activeQueue.batch.total_groups)) * 100)}%`
+                        }}
+                      />
+                    </div>
+
+                    {/* Current Step Description & Countdown */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 mb-3">
+                      <div className="flex items-center gap-2">
+                        {activeQueue.batch.status === 'running' ? (
+                          <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-medium text-slate-200">{activeQueue.batch.current_step || 'Đang chờ tác vụ...'}</span>
+                      </div>
+                      {activeQueue.batch.remainingDelaySeconds > 0 && (
+                        <span className="font-mono text-amber-400 font-bold bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-800/60 flex items-center gap-1.5">
+                          <Timer className="w-3 h-3 text-amber-400" />
+                          <span>Nghỉ chống spam: còn {activeQueue.batch.remainingDelaySeconds}s</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Items Scroll List */}
+                    {activeQueue.items && activeQueue.items.length > 0 && (
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        {activeQueue.items.map((item, idx) => (
+                          <div
+                            key={item.id || idx}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs hover:border-slate-700 transition"
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-[10px] font-mono shrink-0">
+                                {idx + 1}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-white truncate font-mono text-[11px]" title={item.group_url}>
+                                  {item.group_url}
+                                </div>
+                                {item.spun_content && (
+                                  <div className="text-[10px] text-slate-400 truncate italic">
+                                    {item.spun_content.substring(0, 70)}...
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {item.status === 'success' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800/60 text-[10px] font-semibold flex items-center gap-1">
+                                  <Check className="w-3 h-3" /> Thành công
+                                </span>
+                              )}
+                              {item.status === 'posting' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-sky-950 text-sky-300 border border-sky-800/60 text-[10px] font-semibold flex items-center gap-1 animate-pulse">
+                                  <RefreshCw className="w-3 h-3 animate-spin" /> Đang đăng...
+                                </span>
+                              )}
+                              {item.status === 'pending' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-slate-800/80 text-slate-400 text-[10px]">
+                                  Chờ lượt
+                                </span>
+                              )}
+                              {item.status === 'failed' && (
+                                <span className="px-2.5 py-1 rounded-lg bg-rose-950 text-rose-300 border border-rose-800/60 text-[10px] font-semibold flex items-center gap-1" title={item.error_message}>
+                                  <AlertTriangle className="w-3 h-3" /> Lỗi
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Báo cáo kết quả bài đăng */}
                 {lastPostResult && (

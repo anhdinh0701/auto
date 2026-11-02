@@ -423,6 +423,40 @@ db.exec(`
     created_at TEXT,
     updated_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS publishing_batches (
+    id TEXT PRIMARY KEY,
+    total_groups INTEGER DEFAULT 0,
+    completed_groups INTEGER DEFAULT 0,
+    failed_groups INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending', -- 'pending' | 'running' | 'completed' | 'paused' | 'stopped'
+    delay_min INTEGER DEFAULT 90,
+    delay_max INTEGER DEFAULT 180,
+    auto_spin INTEGER DEFAULT 1,
+    current_index INTEGER DEFAULT 0,
+    current_group_url TEXT,
+    current_step TEXT,
+    error_message TEXT,
+    created_at TEXT,
+    updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS publishing_batch_items (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    group_url TEXT NOT NULL,
+    group_name TEXT,
+    content TEXT,
+    spun_content TEXT,
+    images TEXT DEFAULT '[]',
+    status TEXT DEFAULT 'pending', -- 'pending' | 'posting' | 'success' | 'failed' | 'skipped'
+    delay_seconds INTEGER DEFAULT 0,
+    error_message TEXT,
+    published_url TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT
+  );
 `);
 
 // Initialize default AI Settings with GROQ_API_KEY if not present
