@@ -184,6 +184,19 @@ class DedicatedPostingAgent {
 
     this.logAction(scheduleId, 'AGENT_START', 'RUNNING', `Bắt đầu quy trình đăng tin theo lịch cho nhóm ${schedule.group_name || groupUrl}`);
 
+    // Bảo vệ 100%: Tự động kích hoạt Trạm Chrome Port 9222 nếu chưa chạy để không bao giờ bị hụt phiên
+    try {
+      const chromeStation = require('./chromeStationService');
+      const st = await chromeStation.checkStatus();
+      if (!st.connected) {
+        console.log(`[DedicatedPostingAgent] Trạm Chrome (Port 9222) chưa bật. Đang tự động kích hoạt...`);
+        await chromeStation.launchStation();
+        await new Promise(r => setTimeout(r, 4000));
+      }
+    } catch (stErr) {
+      console.warn(`[DedicatedPostingAgent] Tự động bật Trạm Chrome cảnh báo:`, stErr.message);
+    }
+
     try {
       if (schedule.mode === 'crosspost_loop') {
         console.log(`[DedicatedPostingAgent] Lịch hẹn Chế độ A: Kích hoạt Vòng lặp vét cạn nhóm theo từ khóa "${schedule.keyword || 'Khai Sơn'}"...`);

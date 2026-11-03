@@ -24,7 +24,28 @@ async function getBrowserSession() {
     console.log('[ChromePublish] Port 9222 chưa phản hồi:', cdpErr.message);
   }
 
-  // 2. Dự phòng: Singleton Persistent Context (C:\bds_playwright_visible)
+  // 2. Tự động phục hồi: Tự động khởi động Trạm Chrome Port 9222 nếu chưa mở
+  try {
+    const chromeStation = require('./chromeStationService');
+    console.log('[ChromePublish] Đang tự động khởi động Trạm Chrome (Port 9222) để giữ nguyên phiên đăng nhập...');
+    await chromeStation.launchStation();
+    await new Promise(r => setTimeout(r, 3000));
+
+    const resRetry = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(4000) });
+    if (resRetry.ok) {
+      const dataRetry = await resRetry.json();
+      if (dataRetry.webSocketDebuggerUrl) {
+        console.log('[ChromePublish] Tự động kết nối thành công vào Trạm Chrome vừa khởi động:', dataRetry.webSocketDebuggerUrl);
+        const cdpBrowser = await chromium.connectOverCDP(dataRetry.webSocketDebuggerUrl);
+        const cdpContext = cdpBrowser.contexts()[0] || (await cdpBrowser.newContext());
+        return { context: cdpContext, browser: cdpBrowser, isCDP: true };
+      }
+    }
+  } catch (stationErr) {
+    console.warn('[ChromePublish] Không thể tự khởi động Trạm Chrome:', stationErr.message);
+  }
+
+  // 3. Dự phòng cuối cùng: Persistent Context
   if (!globalContext || !globalContext.browser()?.isConnected()) {
     console.log('[ChromePublish] Khởi động Google Chrome Singleton (C:\\bds_playwright_visible)...');
     globalContext = await chromium.launchPersistentContext('C:\\bds_playwright_visible', {
