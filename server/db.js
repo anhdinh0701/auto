@@ -358,6 +358,10 @@ ensureColumn('PostingSchedules', 'jitter_offset_minutes', "INTEGER DEFAULT 0");
 ensureColumn('PostingSchedules', 'opening_hook', "TEXT");
 ensureColumn('PostingSchedules', 'spun_content', "TEXT");
 ensureColumn('PostingSchedules', 'retry_count', "INTEGER DEFAULT 0");
+ensureColumn('PostingSchedules', 'mode', "TEXT DEFAULT 'direct'");
+ensureColumn('PostingSchedules', 'keyword', "TEXT DEFAULT 'Khai Sơn'");
+ensureColumn('PostingSchedules', 'delay_min', "INTEGER DEFAULT 90");
+ensureColumn('PostingSchedules', 'delay_max', "INTEGER DEFAULT 180");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS facebook_oauth_states (
@@ -457,6 +461,28 @@ db.exec(`
     started_at TEXT,
     completed_at TEXT,
     created_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS crosspost_batches (
+    id TEXT PRIMARY KEY,
+    root_group_url TEXT NOT NULL,
+    keyword TEXT DEFAULT 'Khai Sơn',
+    content TEXT NOT NULL,
+    images TEXT DEFAULT '[]',
+    status TEXT DEFAULT 'pending', -- 'pending' | 'running' | 'completed' | 'stopped' | 'failed'
+    current_batch_index INTEGER DEFAULT 0,
+    total_posted_groups INTEGER DEFAULT 0,
+    posted_group_names TEXT DEFAULT '[]',
+    batch_history TEXT DEFAULT '[]',
+    delay_min INTEGER DEFAULT 90,
+    delay_max INTEGER DEFAULT 180,
+    auto_spin INTEGER DEFAULT 1,
+    current_step TEXT,
+    last_screenshot_url TEXT,
+    retry_count INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at TEXT,
+    updated_at TEXT
   );
 `);
 

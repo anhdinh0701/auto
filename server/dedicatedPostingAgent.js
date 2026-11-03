@@ -185,6 +185,40 @@ class DedicatedPostingAgent {
     this.logAction(scheduleId, 'AGENT_START', 'RUNNING', `Bắt đầu quy trình đăng tin theo lịch cho nhóm ${schedule.group_name || groupUrl}`);
 
     try {
+      if (schedule.mode === 'crosspost_loop') {
+        console.log(`[DedicatedPostingAgent] Lịch hẹn Chế độ A: Kích hoạt Vòng lặp vét cạn nhóm theo từ khóa "${schedule.keyword || 'Khai Sơn'}"...`);
+        const crossPostLoopService = require('./crossPostLoopService');
+        const loopResult = crossPostLoopService.createLoop({
+          rootGroupUrl: groupUrl,
+          keyword: schedule.keyword || 'Khai Sơn',
+          content: postContent,
+          images: imagePaths,
+          delayMin: schedule.delay_min || 90,
+          delayMax: schedule.delay_max || 180,
+          autoSpin: true
+        });
+
+        const nowComplete = new Date().toISOString();
+        db.prepare(`
+          UPDATE PostingSchedules SET
+            status = 'Published',
+            published_url = ?,
+            error_log = NULL,
+            updated_at = ?
+          WHERE id = ?
+        `).run(groupUrl, nowComplete, scheduleId);
+
+        this.logAction(scheduleId, 'POST_SUCCESS', 'COMPLETED', `Đã kích hoạt vòng lặp vét cạn nhóm Khai Sơn thành công!`);
+        return {
+          success: true,
+          scheduleId,
+          groupUrl,
+          status: 'Published',
+          publishedAt: nowComplete,
+          message: `Đã kích hoạt vòng lặp vét cạn nhóm theo lịch hẹn!`
+        };
+      }
+
       const publishResult = await chromePublishService.publishToGroup({
         groupUrl,
         content: postContent,
@@ -266,7 +300,7 @@ class DedicatedPostingAgent {
   /**
    * Direct human-like post execution from Single-Page Workspace
    */
-  async executeDirectPost({ group_url, content, image_filenames = [], scheduled_time = null }) {
+  async executeDirectPost({ group_url, content, image_filenames = [], scheduled_time = null, mode = 'direct', keyword = 'Khai Sơn', delay_min = 90, delay_max = 180 }) {
     if (!group_url || !group_url.trim()) {
       throw new Error('Vui lòng nhập đường dẫn URL Nhóm Facebook cần đăng.');
     }
@@ -285,8 +319,8 @@ class DedicatedPostingAgent {
       db.prepare(`
         INSERT INTO PostingSchedules (
           id, property_id, group_id, selected_media_ids, scheduled_time,
-          target_time_slot, opening_hook, spun_content, status, created_at, updated_at
-        ) VALUES (?, 'direct-post', ?, ?, ?, ?, '', ?, 'Pending', ?, ?)
+          target_time_slot, opening_hook, spun_content, status, mode, keyword, delay_min, delay_max, created_at, updated_at
+        ) VALUES (?, 'direct-post', ?, ?, ?, ?, '', ?, 'Pending', ?, ?, ?, ?, ?, ?)
       `).run(
         scheduleId,
         cleanGroupUrl,
@@ -294,6 +328,10 @@ class DedicatedPostingAgent {
         scheduledIso,
         scheduledIso.slice(11, 16),
         cleanContent,
+        mode,
+        keyword,
+        delay_min,
+        delay_max,
         nowIso,
         nowIso
       );
@@ -302,8 +340,10 @@ class DedicatedPostingAgent {
         success: true,
         isScheduled: true,
         scheduleId,
+        mode,
+        keyword,
         scheduled_time: scheduledIso,
-        message: `Đã lên lịch đăng bài thành công vào lúc: ${new Date(scheduled_time).toLocaleString('vi-VN')}`
+        message: `Đã lên lịch đăng bài thành công (${mode === 'crosspost_loop' ? 'Vòng lặp vét cạn' : 'Đăng trực tiếp'}) vào lúc: ${new Date(scheduled_time).toLocaleString('vi-VN')}`
       };
     }
 

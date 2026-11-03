@@ -13,6 +13,7 @@ const dedicatedPostingAgent = require('./dedicatedPostingAgent');
 const chromeStationService = require('./chromeStationService');
 const chromePublishService = require('./chromePublishService');
 const multiGroupQueueService = require('./multiGroupQueueService');
+const crossPostLoopService = require('./crossPostLoopService');
 const connectorRegistry = require('./connectors/ConnectorRegistry');
 const { validateListingLocation, checkChannelLocationMatch } = require('./locationValidator');
 const { uploadsDir, getAbsoluteMediaPath } = require('./mediaHelper');
@@ -33,6 +34,12 @@ if (!fs.existsSync(errorLogsDir)) {
   fs.mkdirSync(errorLogsDir, { recursive: true });
 }
 app.use('/logs/errors', express.static(errorLogsDir));
+
+const crosspostLogsDir = path.resolve(__dirname, '..', 'logs', 'crosspost');
+if (!fs.existsSync(crosspostLogsDir)) {
+  fs.mkdirSync(crosspostLogsDir, { recursive: true });
+}
+app.use('/logs/crosspost', express.static(crosspostLogsDir));
 
 // 2. Intelligent fallback handler: resolve original names, un-prefixed names or partial matches
 app.get('/uploads/:filename', (req, res, next) => {
@@ -648,6 +655,54 @@ const handlePublishRequest = async (req, res) => {
       return res.status(400).json({ success: false, connected: false, error: 'Thiếu đường dẫn Nhóm Facebook hợp lệ (groupUrl).' });
     }
 
+    // CHẾ ĐỘ A: VÒNG LẶP VÉT CẠN THEO TỪ KHÓA BẰNG NÚT "+ THÊM NHÓM" (CROSS-POSTING BATCH LOOP)
+    if (req.body.publishMode === 'crosspost_loop' || req.body.mode === 'crosspost_loop') {
+      const keyword = req.body.keyword !== undefined ? req.body.keyword : 'Khai Sơn';
+
+      // Nếu hẹn giờ cho Chế độ A
+      if (scheduledTime && new Date(scheduledTime) > new Date()) {
+        const scheduleResult = await dedicatedPostingAgent.executeDirectPost({
+          group_url: urlList[0],
+          content: content.trim(),
+          image_filenames: images,
+          scheduled_time: scheduledTime,
+          mode: 'crosspost_loop',
+          keyword: keyword,
+          delay_min: delayMin,
+          delay_max: delayMax
+        });
+        return res.json({
+          ...scheduleResult,
+          isScheduled: true,
+          mode: 'crosspost_loop',
+          keyword
+        });
+      }
+
+      // Kích hoạt ngay lập tức vòng lặp vét cạn
+      const loopResult = crossPostLoopService.createLoop({
+        rootGroupUrl: urlList[0],
+        keyword: keyword,
+        content: content.trim(),
+        images,
+        delayMin,
+        delayMax,
+        autoSpin,
+        maxPerBatch: Number(req.body.maxPerBatch) || 8
+      });
+
+      return res.json({
+        success: true,
+        isCrossPostLoop: true,
+        batchId: loopResult.batchId,
+        rootGroupUrl: loopResult.rootGroupUrl,
+        keyword: loopResult.keyword,
+        delayMin: loopResult.delayMin,
+        delayMax: loopResult.delayMax,
+        message: loopResult.message
+      });
+    }
+
     // 1. Trường hợp lên lịch cho nhiều khung giờ (mỗi khung giờ có nội dung riêng biệt)
     if (Array.isArray(schedules) && schedules.length > 0) {
       const createdSchedules = [];
@@ -777,6 +832,44 @@ app.get('/api/publish/queue/:batchId', (req, res) => {
 app.post('/api/publish/queue/:batchId/stop', (req, res) => {
   try {
     const result = multiGroupQueueService.stopBatch(req.params.batchId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------- CROSS-POSTING LOOP (CHẾ ĐỘ A) API ENDPOINTS ---------------- //
+app.post('/api/crosspost/loop', (req, res) => {
+  try {
+    const { rootGroupUrl, keyword, content, images, delayMin, delayMax, autoSpin, maxPerBatch } = req.body;
+    const result = crossPostLoopService.createLoop({
+      rootGroupUrl,
+      keyword,
+      content,
+      images,
+      delayMin,
+      delayMax,
+      autoSpin,
+      maxPerBatch
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/crosspost/active', (req, res) => {
+  try {
+    const status = crossPostLoopService.getActiveLoop();
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/crosspost/:batchId/stop', (req, res) => {
+  try {
+    const result = crossPostLoopService.stopLoop(req.params.batchId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

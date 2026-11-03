@@ -59,6 +59,17 @@ export default function CleanWorkspaceView() {
   const fileInputRef = useRef(null);
 
   // ------------------ MỤC 2: SOẠN BÀI & LINK NHÓM (MULTI-GROUP QUEUE) ------------------
+  // 3 CHẾ ĐỘ XUẤT BẢN THEO FLOW MỚI:
+  // 'mode_a' (Vét cạn nhóm theo từ khóa bằng "+ Thêm nhóm" - Khuyên dùng)
+  // 'mode_b' (Hàng đợi link nhóm độc lập - Multi-Group URL Queue)
+  // 'mode_c' (Đặt lịch hẹn giờ tự động - Hẹn giờ Chế độ A hoặc B)
+  const [publishMode, setPublishMode] = useState('mode_a');
+  const [crosspostRootUrl, setCrosspostRootUrl] = useState('https://www.facebook.com/groups/1857977624574831');
+  const [crosspostKeyword, setCrosspostKeyword] = useState('Khai Sơn');
+  const [activeCrossPostLoop, setActiveCrossPostLoop] = useState(null);
+  const [isStoppingCrossPost, setIsStoppingCrossPost] = useState(false);
+  const [scheduleTargetMode, setScheduleTargetMode] = useState('mode_a'); // Chế độ A hoặc B khi đến giờ hẹn
+
   const [groupUrlsText, setGroupUrlsText] = useState('https://www.facebook.com/groups/1857977624574831?locale=vi_VN');
   const [delayMin, setDelayMin] = useState(90);
   const [delayMax, setDelayMax] = useState(180);
@@ -337,6 +348,32 @@ Liên hệ: 033.8866.058 ( zalo)`
   const [chatLoading, setChatLoading] = useState(false);
   const chatMessagesEndRef = useRef(null);
 
+  // Lấy dữ liệu tiến độ vòng lặp vét cạn nhóm (Chế độ A)
+  const fetchActiveCrossPostLoop = async () => {
+    try {
+      const res = await fetch('/api/crosspost/active');
+      if (!res.ok) return;
+      const data = await res.json();
+      setActiveCrossPostLoop(data);
+    } catch (_) {}
+  };
+
+  // Dừng khẩn cấp vòng lặp vét cạn
+  const handleStopCrossPostLoop = async (batchId) => {
+    if (!batchId) return;
+    setIsStoppingCrossPost(true);
+    try {
+      const res = await fetch(`/api/crosspost/${batchId}/stop`, { method: 'POST' });
+      const data = await res.json();
+      addToast(data.message || 'Đã gửi lệnh dừng vòng lặp vét cạn!', 'info');
+      await fetchActiveCrossPostLoop();
+    } catch (err) {
+      addToast('Lỗi dừng vòng lặp: ' + err.message, 'error');
+    } finally {
+      setIsStoppingCrossPost(false);
+    }
+  };
+
   // Lấy dữ liệu tiến độ hàng đợi nhiều nhóm chạy ngầm
   const fetchActiveQueue = async () => {
     try {
@@ -367,11 +404,13 @@ Liên hệ: 033.8866.058 ( zalo)`
     checkChromeStation(true);
     fetchPendingSchedules();
     fetchActiveQueue();
+    fetchActiveCrossPostLoop();
     // Tự động kiểm tra trạng thái mỗi 3 giây
     const interval = setInterval(() => {
       checkChromeStation(true);
       fetchPendingSchedules();
       fetchActiveQueue();
+      fetchActiveCrossPostLoop();
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -488,18 +527,160 @@ Liên hệ: 033.8866.058 ( zalo)`
     }
   };
 
-  // ==================== ĐĂNG BÀI THẬT (DIRECT POST & MULTI-GROUP QUEUE) ====================
+  // ==================== ĐĂNG BÀI THẬT (THEO 3 CHẾ ĐỘ XUẤT BẢN) ====================
   const handleDirectPost = async () => {
+    const imageFilenames = uploadedPhotos.map(p => p.filename || p.path || p.url);
+    const postRecordId = 'post-' + Date.now();
+    const submissionTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    if (!postContent.trim()) {
+      addToast('Vui lòng nhập nội dung bài viết trước khi đăng!', 'error');
+      return;
+    }
+
+    // ==================== CHẾ ĐỘ A: VÒNG LẶP VÉT CẠN THEO TỪ KHÓA BẰNG "+ THÊM NHÓM" (MẶC ĐỊNH KHUYÊN DÙNG) ====================
+    if (publishMode === 'mode_a') {
+      if (!crosspostRootUrl.trim() || !crosspostRootUrl.includes('facebook.com')) {
+        addToast('Vui lòng nhập Link Nhóm Facebook gốc hợp lệ để mở khung đăng bài!', 'error');
+        return;
+      }
+
+      setIsPosting(true);
+      setPostingProgress(`Đang kích hoạt Vòng lặp vét cạn nhóm theo từ khóa "${crosspostKeyword || 'Tất cả'}"...`);
+      setLastPostResult(null);
+
+      try {
+        const res = await fetch('/api/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            publishMode: 'crosspost_loop',
+            groupUrl: crosspostRootUrl.trim(),
+            keyword: crosspostKeyword ? crosspostKeyword.trim() : '',
+            content: postContent.trim(),
+            images: imageFilenames,
+            delayMin: Number(delayMin) || 90,
+            delayMax: Number(delayMax) || 180,
+            autoSpin: Boolean(autoSpin)
+          })
+        });
+
+        const data = await res.json();
+        setLastPostResult(data);
+
+        if (data.success && data.isCrossPostLoop) {
+          addToast(`🎯 Đã kích hoạt Chế độ A: Vòng lặp vét cạn nhóm "${crosspostKeyword || 'Tất cả'}" thành công!`, 'success');
+          await fetchActiveCrossPostLoop();
+
+          const newHistoryItem = {
+            id: postRecordId,
+            time: submissionTime,
+            groupUrl: `Vét cạn nhóm [${crosspostKeyword || 'Tất cả'}]`,
+            contentSnippet: postContent.trim().substring(0, 100) + (postContent.length > 100 ? '...' : ''),
+            imageCount: imageFilenames.length,
+            mode: `Vòng lặp vét cạn (Từ khóa: ${crosspostKeyword || 'Tất cả'} | Nghỉ ${data.delayMin}-${data.delayMax}s)`,
+            scheduledTime: null,
+            success: true,
+            statusText: 'Đang vét cạn nhóm',
+            error: null,
+            screenshotUrl: null,
+            postUrl: null
+          };
+          setPostHistory(prev => [newHistoryItem, ...prev]);
+        } else {
+          addToast(data.error || 'Khởi động vòng lặp thất bại.', 'error');
+        }
+      } catch (err) {
+        addToast('Lỗi: ' + err.message, 'error');
+      } finally {
+        setIsPosting(false);
+        setPostingProgress('');
+      }
+      return;
+    }
+
+    // ==================== CHẾ ĐỘ C: ĐẶT LỊCH HẸN GIỜ TỰ ĐỘNG ====================
+    if (publishMode === 'mode_c') {
+      if (postTimingMode === 'schedule' && !scheduledDateTime) {
+        addToast('Vui lòng chọn thời gian hẹn giờ cụ thể!', 'error');
+        return;
+      }
+
+      setIsPosting(true);
+      setPostingProgress(`Đang lưu lịch hẹn giờ tự động...`);
+      setLastPostResult(null);
+
+      try {
+        if (scheduleTargetMode === 'mode_a') {
+          // Hẹn giờ cho Chế độ A
+          const res = await fetch('/api/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              publishMode: 'crosspost_loop',
+              groupUrl: crosspostRootUrl.trim(),
+              keyword: crosspostKeyword ? crosspostKeyword.trim() : '',
+              content: postContent.trim(),
+              images: imageFilenames,
+              delayMin: Number(delayMin) || 90,
+              delayMax: Number(delayMax) || 180,
+              autoSpin: Boolean(autoSpin),
+              scheduledTime: scheduledDateTime
+            })
+          });
+          const data = await res.json();
+          setLastPostResult(data);
+          if (data.success) {
+            addToast(`⏰ Đã hẹn lịch Vòng lặp vét cạn nhóm "${crosspostKeyword || 'Tất cả'}" lúc: ${new Date(scheduledDateTime).toLocaleString('vi-VN')}`, 'success');
+            fetchPendingSchedules();
+          } else {
+            addToast(data.error || 'Lỗi hẹn giờ Chế độ A', 'error');
+          }
+        } else {
+          // Hẹn giờ cho Chế độ B (Nhiều link nhóm)
+          if (parsedGroupUrls.length === 0) {
+            addToast('Vui lòng nhập ít nhất 1 link nhóm Facebook!', 'error');
+            setIsPosting(false);
+            return;
+          }
+          const res = await fetch('/api/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              groupUrls: parsedGroupUrls,
+              content: postContent.trim(),
+              images: imageFilenames,
+              delayMin: Number(delayMin) || 90,
+              delayMax: Number(delayMax) || 180,
+              autoSpin: Boolean(autoSpin),
+              scheduledTime: scheduledDateTime
+            })
+          });
+          const data = await res.json();
+          setLastPostResult(data);
+          if (data.success) {
+            addToast(`⏰ Đã hẹn lịch đăng ${parsedGroupUrls.length} nhóm lúc: ${new Date(scheduledDateTime).toLocaleString('vi-VN')}`, 'success');
+            fetchPendingSchedules();
+          } else {
+            addToast(data.error || 'Lỗi hẹn giờ Chế độ B', 'error');
+          }
+        }
+      } catch (err) {
+        addToast('Lỗi hẹn lịch: ' + err.message, 'error');
+      } finally {
+        setIsPosting(false);
+        setPostingProgress('');
+      }
+      return;
+    }
+
+    // ==================== CHẾ ĐỘ B: HÀNG ĐỢI TỪNG LINK NHÓM ĐỘC LẬP (MULTI-GROUP URL QUEUE) ====================
     if (parsedGroupUrls.length === 0) {
       addToast('Vui lòng nhập ít nhất 1 Link Nhóm Facebook hợp lệ!', 'error');
       return;
     }
 
-    const imageFilenames = uploadedPhotos.map(p => p.filename || p.path || p.url);
-    const postRecordId = 'post-' + Date.now();
-    const submissionTime = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    // 1. CHẾ ĐỘ LÊN LỊCH NHIỀU KHUNG GIỜ VỚI NỘI DUNG RIÊNG TỪNG GIỜ
+    // 1. Trường hợp lên lịch cho nhiều khung giờ (mỗi khung giờ có nội dung riêng biệt)
     if (postTimingMode === 'multi_schedule') {
       const validSlots = timeSlots.filter(s => s.time && s.content && s.content.trim());
       if (validSlots.length === 0) {
@@ -1031,66 +1212,273 @@ Liên hệ: 033.8866.058 ( zalo)`
               
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-7 space-y-6">
                 
-                {/* 1. Danh sách Nhóm Facebook mục tiêu (Multi-Group Queue) */}
-                <div className="space-y-3">
+                {/* 1. CHỌN 1 TRONG 3 CHẾ ĐỘ XUẤT BẢN THEO BẢN THIẾT KẾ HỢP NHẤT */}
+                <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-bold text-white flex items-center gap-2">
-                      <ListOrdered className="w-4 h-4 text-emerald-400" />
-                      <span>1. Danh sách Nhóm Facebook mục tiêu (Multi-Group Queue):</span>
+                      <Sparkles className="w-4 h-4 text-emerald-400" />
+                      <span>1. Chọn Chế độ Xuất bản & Đăng bài:</span>
                     </label>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-600/50">
-                        {parsedGroupUrls.length} nhóm hợp lệ
-                      </span>
-                      <span className="text-xs text-slate-400 hidden sm:inline">Không giới hạn số lượng</span>
+                    <span className="text-xs text-slate-400 font-medium">Bản thiết kế hợp nhất 6 tầng</span>
+                  </div>
+
+                  {/* 3 Nút Chọn Chế Độ */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Chế độ A */}
+                    <button
+                      type="button"
+                      onClick={() => setPublishMode('mode_a')}
+                      className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        publishMode === 'mode_a'
+                          ? 'bg-emerald-950/40 border-emerald-500 shadow-lg shadow-emerald-950/50 ring-1 ring-emerald-500/50'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                          <Zap className="w-3 h-3 fill-current" /> Mặc định - Khuyên dùng
+                        </span>
+                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          publishMode === 'mode_a' ? 'border-emerald-400 bg-emerald-500 text-white' : 'border-slate-600'
+                        }`}>
+                          {publishMode === 'mode_a' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm mb-1">Chế độ A: Vét cạn nhóm (+ Thêm nhóm)</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          Tự động mở nhóm gốc, nạp ảnh trước, bấm "+ Thêm nhóm" quét chọn 8-10 nhóm Khai Sơn và lặp lại liên tục cho đến khi phủ sóng 100% nhóm.
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* Chế độ B */}
+                    <button
+                      type="button"
+                      onClick={() => setPublishMode('mode_b')}
+                      className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        publishMode === 'mode_b'
+                          ? 'bg-sky-950/40 border-sky-500 shadow-lg shadow-sky-950/50 ring-1 ring-sky-500/50'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-sky-500/20 text-sky-300 border border-sky-500/40">
+                          <ListOrdered className="w-3 h-3" /> Hàng đợi
+                        </span>
+                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          publishMode === 'mode_b' ? 'border-sky-400 bg-sky-500 text-white' : 'border-slate-600'
+                        }`}>
+                          {publishMode === 'mode_b' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm mb-1">Chế độ B: Hàng đợi link nhóm độc lập</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          Dán danh sách không giới hạn các link nhóm tùy ý (mỗi dòng 1 URL), hệ thống chạy tuần tự và nghỉ giãn cách an toàn.
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* Chế độ C */}
+                    <button
+                      type="button"
+                      onClick={() => setPublishMode('mode_c')}
+                      className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
+                        publishMode === 'mode_c'
+                          ? 'bg-amber-950/40 border-amber-500 shadow-lg shadow-amber-950/50 ring-1 ring-amber-500/50'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                          <Calendar className="w-3 h-3" /> Tự động
+                        </span>
+                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          publishMode === 'mode_c' ? 'border-amber-400 bg-amber-500 text-white' : 'border-slate-600'
+                        }`}>
+                          {publishMode === 'mode_c' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm mb-1">Chế độ C: Đặt lịch hẹn giờ tự động</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          Hẹn ngày & giờ cụ thể trong tương lai. Đến giờ, Dedicated Agent tự động kích hoạt Chế độ A hoặc B hoàn toàn tự động.
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* KHUNG CẤU HÌNH THEO CHẾ ĐỘ ĐANG CHỌN */}
+                  {publishMode === 'mode_a' && (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-emerald-800/40 space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                        <Zap className="w-4 h-4" />
+                        <span>Cấu hình Chế độ A: Vòng lặp vét cạn nhóm qua "+ Thêm nhóm"</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                            Link Nhóm Facebook gốc (để mở khung bài viết):
+                          </label>
+                          <input
+                            type="text"
+                            value={crosspostRootUrl}
+                            onChange={(e) => setCrosspostRootUrl(e.target.value)}
+                            placeholder="https://www.facebook.com/groups/1857977624574831"
+                            className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-emerald-500 focus:outline-hidden"
+                          />
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            Hệ thống sẽ vào nhóm này để tạo bài viết và bấm "+ Thêm nhóm" chọn các nhóm khác.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                            Từ khóa lọc nhóm vét cạn:
+                          </label>
+                          <input
+                            type="text"
+                            value={crosspostKeyword}
+                            onChange={(e) => setCrosspostKeyword(e.target.value)}
+                            placeholder="Ví dụ: Khai Sơn (để trống để chọn tất cả nhóm đã tham gia)"
+                            className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-medium focus:border-emerald-500 focus:outline-hidden"
+                          />
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            Mỗi đợt chọn tối đa 8-10 nhóm chưa từng đăng, nghỉ an toàn rồi tự động vét tiếp đợt sau.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Giải thích quy trình 7 bước */}
+                      <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-200/90 leading-relaxed space-y-1">
+                        <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>Quy trình 7 bước tự động khép kín (Flow Chế độ A):</span>
+                        </div>
+                        <p className="text-[11px] text-slate-300 pl-5">
+                          1. Mở nhóm gốc → 2. Mở ô tạo bài → 3. <strong>Up ảnh trước</strong> (chờ thumbnail) → 4. <strong>Nhập chữ sau</strong> (AI micro-spin từ đợt 2) → 5. Bấm "+ Thêm nhóm" → 6. Tích chọn tối đa 8-10 nhóm chưa đăng → 7. Đăng 1 chạm, lưu log, nghỉ giãn cách và tự động lặp lại cho đến khi đăng hết 100% nhóm!
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  <textarea
-                    rows={4}
-                    value={groupUrlsText}
-                    onChange={(e) => setGroupUrlsText(e.target.value)}
-                    placeholder="Dán danh sách các link nhóm Facebook vào đây (mỗi dòng 1 link nhóm). Ví dụ:&#10;https://www.facebook.com/groups/1857977624574831&#10;https://www.facebook.com/groups/batdongsanhanoi...&#10;Hệ thống hỗ trợ KHÔNG GIỚI HẠN số lượng nhóm, tự động đăng tuần tự và chống spam!"
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-xs font-mono focus:outline-hidden focus:border-emerald-500 transition leading-relaxed"
-                  />
+                  {publishMode === 'mode_b' && (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-sky-800/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-sky-400 uppercase tracking-wider flex items-center gap-2">
+                          <ListOrdered className="w-4 h-4" />
+                          <span>Danh sách URL các nhóm Facebook mục tiêu (Hàng đợi độc lập):</span>
+                        </label>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-950 text-sky-300 border border-sky-600/50">
+                          {parsedGroupUrls.length} nhóm hợp lệ
+                        </span>
+                      </div>
 
-                  {/* Nút nạp nhóm nhanh */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-slate-400 text-[11px]">Nạp nhanh nhóm mẫu:</span>
-                      <button
-                        type="button"
-                        onClick={() => handleAddSampleGroups(SAMPLE_KHAISON_GROUPS)}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 text-xs font-medium border border-emerald-700/60 transition"
-                      >
-                        + 7 nhóm Khai Sơn đã tham gia
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAddSampleGroups(SAMPLE_HANOI_GROUPS)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
-                      >
-                        + 5 nhóm BĐS Hà Nội
-                      </button>
+                      <textarea
+                        rows={4}
+                        value={groupUrlsText}
+                        onChange={(e) => setGroupUrlsText(e.target.value)}
+                        placeholder="Dán danh sách các link nhóm Facebook vào đây (mỗi dòng 1 link nhóm).&#10;https://www.facebook.com/groups/1857977624574831&#10;https://www.facebook.com/groups/batdongsanhanoi...&#10;Hệ thống hỗ trợ KHÔNG GIỚI HẠN số lượng nhóm, tự động đăng tuần tự và chống spam!"
+                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-xs font-mono focus:outline-hidden focus:border-sky-500 transition leading-relaxed"
+                      />
+
+                      {/* Nút nạp nhóm nhanh */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-slate-400 text-[11px]">Nạp nhanh nhóm mẫu:</span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddSampleGroups(SAMPLE_KHAISON_GROUPS)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 text-xs font-medium border border-emerald-700/60 transition"
+                          >
+                            + 7 nhóm Khai Sơn đã tham gia
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddSampleGroups(SAMPLE_HANOI_GROUPS)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+                          >
+                            + 5 nhóm BĐS Hà Nội
+                          </button>
+                        </div>
+                        {groupUrlsText.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setGroupUrlsText('')}
+                            className="text-slate-400 hover:text-rose-400 text-xs transition"
+                          >
+                            Xóa danh sách link
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    {groupUrlsText.trim() && (
-                      <button
-                        type="button"
-                        onClick={() => setGroupUrlsText('')}
-                        className="text-slate-400 hover:text-rose-400 text-xs transition"
-                      >
-                        Xóa danh sách link
-                      </button>
-                    )}
-                  </div>
+                  )}
 
-                  {/* Gợi ý tính năng Đăng Chéo Siêu Tốc */}
-                  <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-sky-950/40 border border-sky-800/50 text-xs text-sky-200">
-                    <Zap className="w-4 h-4 text-sky-400 shrink-0 fill-current" />
-                    <span>
-                      <strong>Đăng chéo siêu tốc (+ Thêm nhóm):</strong> Sau khi nạp ảnh và gõ chữ, hệ thống tự động bấm nút <em>"+ Thêm nhóm"</em> bên trong Facebook để chọn thêm tối đa 8 nhóm Khai Sơn khác, đăng 1 lần phủ sóng đồng loạt tất cả các nhóm chỉ trong vài giây!
-                    </span>
-                  </div>
+                  {publishMode === 'mode_c' && (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-amber-800/40 space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                        <Calendar className="w-4 h-4" />
+                        <span>Cấu hình Chế độ C: Đặt lịch hẹn giờ tự động</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                            Phương thức xuất bản khi đến giờ hẹn:
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setScheduleTargetMode('mode_a')}
+                              className={`p-2.5 rounded-lg border text-xs font-semibold text-center transition ${
+                                scheduleTargetMode === 'mode_a'
+                                  ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              ⚡ Kích hoạt Vét cạn (Chế độ A)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScheduleTargetMode('mode_b')}
+                              className={`p-2.5 rounded-lg border text-xs font-semibold text-center transition ${
+                                scheduleTargetMode === 'mode_b'
+                                  ? 'bg-sky-950/60 border-sky-500 text-sky-300'
+                                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              📋 Kích hoạt Hàng đợi (Chế độ B)
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                            Thời gian kích hoạt (Ngày & Giờ):
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={scheduledDateTime}
+                            onChange={(e) => setScheduledDateTime(e.target.value)}
+                            className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs font-mono focus:border-amber-500 focus:outline-hidden"
+                          />
+                        </div>
+                      </div>
+
+                      {scheduleTargetMode === 'mode_a' ? (
+                        <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-800/30 text-xs text-slate-300">
+                          Đến giờ hẹn, hệ thống sẽ mở nhóm <strong>{crosspostRootUrl}</strong> và tự động chạy vòng lặp vét cạn các nhóm có từ khóa <strong>"{crosspostKeyword || 'Tất cả'}"</strong>.
+                        </div>
+                      ) : (
+                        <div className="p-3 rounded-lg bg-sky-950/20 border border-sky-800/30 text-xs text-slate-300">
+                          Đến giờ hẹn, hệ thống sẽ đẩy danh sách <strong>{parsedGroupUrls.length} nhóm</strong> ở Chế độ B vào Hàng đợi và bắt đầu đăng bài.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                   {/* BẢNG CẤU HÌNH CHỐNG KHÓA NICK (ANTI-SPAM BATCHING & GROQ SPIN) */}
                   <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 mt-2">
@@ -1172,7 +1560,6 @@ Liên hệ: 033.8866.058 ( zalo)`
                       </div>
                     </div>
                   </div>
-                </div>
 
                 {/* 2. Khung soạn thảo bài viết */}
                 <div className="space-y-2">
@@ -1524,10 +1911,12 @@ Liên hệ: 033.8866.058 ( zalo)`
                       <>
                         <Zap className="w-5 h-5 fill-current" />
                         <span>
-                          {postTimingMode === 'multi_schedule'
+                          {publishMode === 'mode_a'
+                            ? `🎯 BẮT ĐẦU VÉT CẠN NHÓM (${crosspostKeyword ? `TỪ KHÓA: ${crosspostKeyword.toUpperCase()}` : 'TẤT CẢ NHÓM'})`
+                            : publishMode === 'mode_c'
+                            ? `⏰ ĐẶT LỊCH HẸN GIỜ TỰ ĐỘNG`
+                            : postTimingMode === 'multi_schedule'
                             ? `📅 LÊN LỊCH ĐĂNG CHO ${timeSlots.length} KHUNG GIỜ (${parsedGroupUrls.length} NHÓM)`
-                            : postTimingMode === 'schedule'
-                            ? `⏰ HẸN GIỜ ĐĂNG CHO ${parsedGroupUrls.length} NHÓM`
                             : parsedGroupUrls.length > 1
                             ? `🚀 BẮT ĐẦU ĐĂNG ${parsedGroupUrls.length} NHÓM (HÀNG ĐỢI TỰ ĐỘNG)`
                             : '🚀 ĐĂNG BÀI NGAY BẰNG CHROME LAPTOP'}
@@ -1536,6 +1925,121 @@ Liên hệ: 033.8866.058 ( zalo)`
                     )}
                   </button>
                 </div>
+
+                {/* TIẾN ĐỘ VÒNG LẶP VÉT CẠN NHÓM (CHẾ ĐỘ A - CROSSPOST LOOP PROGRESS) */}
+                {activeCrossPostLoop?.batch && (
+                  <div className={`p-5 rounded-2xl border transition-all ${
+                    activeCrossPostLoop.batch.status === 'running'
+                      ? 'bg-emerald-950/30 border-emerald-500/70 shadow-xl shadow-emerald-950/40'
+                      : activeCrossPostLoop.batch.status === 'stopped'
+                      ? 'bg-amber-950/30 border-amber-600/60'
+                      : activeCrossPostLoop.batch.status === 'completed'
+                      ? 'bg-slate-900 border-slate-700'
+                      : 'bg-rose-950/30 border-rose-600/60'
+                  }`}>
+                    {/* Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-3 h-3 rounded-full ${
+                          activeCrossPostLoop.batch.status === 'running' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'
+                        }`} />
+                        <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                          <span>🎯 Tiến độ Vòng lặp Vét cạn (Chế độ A):</span>
+                          <span className="font-mono text-emerald-300">
+                            Đợt #{activeCrossPostLoop.batch.current_batch_index || 1} • Đã phủ sóng: {activeCrossPostLoop.batch.total_posted_groups || 0} nhóm
+                          </span>
+                        </h4>
+                        <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold uppercase font-mono tracking-wider border ${
+                          activeCrossPostLoop.batch.status === 'running'
+                            ? 'bg-emerald-900/60 text-emerald-300 border-emerald-600/60'
+                            : activeCrossPostLoop.batch.status === 'stopped'
+                            ? 'bg-amber-900/60 text-amber-300 border-amber-600/60'
+                            : activeCrossPostLoop.batch.status === 'completed'
+                            ? 'bg-slate-800 text-slate-300 border-slate-700'
+                            : 'bg-rose-900/60 text-rose-300 border-rose-600/60'
+                        }`}>
+                          {activeCrossPostLoop.batch.status === 'running' ? 'Đang chạy ngầm' : activeCrossPostLoop.batch.status === 'stopped' ? 'Đã dừng' : activeCrossPostLoop.batch.status === 'completed' ? 'Hoàn tất 100%' : 'Thất bại'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {activeCrossPostLoop.batch.status === 'running' && (
+                          <button
+                            type="button"
+                            onClick={() => handleStopCrossPostLoop(activeCrossPostLoop.batch.id)}
+                            disabled={isStoppingCrossPost}
+                            className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow"
+                          >
+                            <StopCircle className="w-3.5 h-3.5" />
+                            <span>{isStoppingCrossPost ? 'Đang dừng...' : 'Dừng khẩn cấp'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Current Step Description & Countdown */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 mb-3">
+                      <div className="flex items-center gap-2">
+                        {activeCrossPostLoop.batch.status === 'running' ? (
+                          <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-medium text-slate-200">{activeCrossPostLoop.batch.current_step || 'Đang chuẩn bị...'}</span>
+                      </div>
+                      {activeCrossPostLoop.batch.remainingDelaySeconds > 0 && (
+                        <span className="font-mono text-amber-400 font-bold bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-800/60 flex items-center gap-1.5">
+                          <Timer className="w-3 h-3 text-amber-400" />
+                          <span>Nghỉ chống spam: còn {activeCrossPostLoop.batch.remainingDelaySeconds}s</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Batch History & Group Tags */}
+                    {activeCrossPostLoop.batch.history && activeCrossPostLoop.batch.history.length > 0 && (
+                      <div className="space-y-2 mt-2">
+                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                          <span>Lịch sử các đợt đã phủ sóng thành công:</span>
+                          <span className="font-mono text-emerald-400">{activeCrossPostLoop.batch.history.length} đợt</span>
+                        </div>
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                          {activeCrossPostLoop.batch.history.map((hist, hIdx) => (
+                            <div key={hIdx} className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+                                  <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+                                  Đợt #{hist.batchIndex} ({hist.groupCount || (hist.selectedGroups?.length || 0) + 1} nhóm)
+                                </span>
+                                <span className="text-[11px] text-slate-400 font-mono">{hist.time}</span>
+                              </div>
+                              {hist.selectedGroups && hist.selectedGroups.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {hist.selectedGroups.map((gName, gIdx) => (
+                                    <span key={gIdx} className="px-2 py-0.5 rounded-md bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 text-[10px] font-medium">
+                                      {gName}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {hist.screenshotUrl && (
+                                <div className="pt-1">
+                                  <a
+                                    href={hist.screenshotUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 underline"
+                                  >
+                                    <ExternalLink className="w-3 h-3" /> Xem ảnh chụp xác nhận đợt #{hist.batchIndex}
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* TIẾN ĐỘ HÀNG ĐỢI CHẠY NGẦM (MULTI-GROUP QUEUE PROGRESS) */}
                 {activeQueue?.batch && (
