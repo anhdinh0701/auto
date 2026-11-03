@@ -2386,8 +2386,18 @@ Liên hệ: 033.8866.058 ( zalo)`
                                   hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
                                 })}
                               </td>
-                              <td className="p-3.5 font-medium text-white max-w-[200px] truncate" title={sched.group_id}>
-                                {sched.group_name || sched.group_id}
+                              <td className="p-3.5 font-medium text-white max-w-[200px]" title={sched.group_id}>
+                                <div className="truncate">{sched.group_name || sched.group_id}</div>
+                                {sched.mode === 'crosspost_loop' ? (
+                                  <div className="text-[10px] text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                    <span>Chế độ A: Vét cạn ("{sched.keyword || 'Khai Sơn'}")</span>
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-slate-400 font-medium mt-0.5">
+                                    Đăng đơn nhóm
+                                  </div>
+                                )}
                               </td>
                               <td className="p-3.5 text-slate-300 max-w-[300px] truncate" title={sched.spun_content}>
                                 {sched.spun_content}
