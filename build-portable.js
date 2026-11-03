@@ -83,9 +83,24 @@ if (!fs.existsSync(targetDataDir)) fs.mkdirSync(targetDataDir, { recursive: true
 const targetChromeProfileDir = path.join(targetDataDir, 'chrome_profile');
 if (!fs.existsSync(targetChromeProfileDir)) fs.mkdirSync(targetChromeProfileDir, { recursive: true });
 
-// Sao chép database sqlite nếu có
+// Chuẩn bị thư mục logs
+const targetLogsDir = path.join(appDir, 'logs');
+if (!fs.existsSync(targetLogsDir)) fs.mkdirSync(targetLogsDir, { recursive: true });
+const targetCrosspostLogs = path.join(targetLogsDir, 'crosspost');
+if (!fs.existsSync(targetCrosspostLogs)) fs.mkdirSync(targetCrosspostLogs, { recursive: true });
+
+// Sao chép database sqlite nếu có (Checkpoint WAL trước)
 const srcDb = path.join(rootDir, 'data', 'realestate.db');
 if (fs.existsSync(srcDb)) {
+  try {
+    const Database = require('better-sqlite3');
+    const tempDb = new Database(srcDb);
+    tempDb.pragma('wal_checkpoint(TRUNCATE)');
+    tempDb.close();
+    console.log('       -> Đã checkpoint WAL database SQLite thành công.');
+  } catch (cpErr) {
+    console.warn('       [!] Cảnh báo checkpoint SQLite:', cpErr.message);
+  }
   fs.copyFileSync(srcDb, path.join(targetDataDir, 'realestate.db'));
   console.log('       -> Đã sao chép database SQLite hiện có sang app/data/realestate.db.');
 }
@@ -191,37 +206,42 @@ const readmeContent = `=========================================================
 
 1. CÁCH KHỞI ĐỘNG PHẦN MỀM:
    - Cách 1 (Khuyên dùng): Nhấp đúp vào "Khoi_Dong_BDS_Studio.vbs"
-     -> Phần mềm sẽ khởi động hoàn toàn ẩn và tự động mở giao diện trên trình duyệt web.
+     -> Phần mềm sẽ khởi động hoàn toàn ẩn nền (không hiện cửa sổ đen) và tự động mở giao diện trên trình duyệt web tại http://localhost:3001.
    - Cách 2: Nhấp đúp vào "Chay_BDS_Studio.bat"
      -> Nếu bạn muốn theo dõi chi tiết màn hình nhật ký (log) của hệ thống.
 
 2. CÁCH TẮT PHẦN MỀM:
    - Nhấp đúp vào file "Dung_BDS_Studio.bat".
 
-3. KẾT NỐI TRẠM ĐĂNG BÀI (CHROME HOẶC EDGE):
-   - Khi vào giao diện, bấm nút "Khởi động Chrome Trạm 24/24" (hoặc khi bấm Đăng bài).
-   - Hệ thống tự động nhận diện Google Chrome hoặc Microsoft Edge (Edge có sẵn 100% trên mọi máy Windows 10 & 11).
+3. KẾT NỐI TRẠM ĐĂNG BÀI (GOOGLE CHROME HOẶC MICROSOFT EDGE):
+   - Khi vào giao diện, bấm nút "Khởi động Chrome Trạm 24/24" (hoặc hệ thống sẽ tự động bật khi bấm Đăng bài).
+   - Hệ thống tự động nhận diện Google Chrome hoặc Microsoft Edge (Edge có sẵn 100% trên mọi máy tính Windows 10 & 11).
    - Cửa sổ trình duyệt sẽ mở ra với hồ sơ riêng độc lập lưu tại: app/data/chrome_profile.
-   - Bạn chỉ cần đăng nhập tài khoản Facebook 1 lần duy nhất tại cửa sổ này. Phiên làm việc sẽ được lưu vĩnh viễn trong thư mục phần mềm.
+   - Bạn chỉ cần đăng nhập tài khoản Facebook 1 lần duy nhất tại cửa sổ này. Toàn bộ phiên đăng nhập được lưu vĩnh viễn trong thư mục phần mềm!
 
-4. CÁC TÍNH NĂNG ĐĂNG BÀI:
-   - Mục 1: Chọn hoặc tải ảnh căn hộ/nhà đất.
-   - Mục 2: Soạn nội dung & link nhóm:
-     + Đăng chéo siêu tốc (+ Thêm nhóm): Tự động tích chọn cùng lúc tối đa 8-9 nhóm liên quan để phủ sóng đồng loạt chỉ trong vài giây.
-     + Hàng đợi đa nhóm (Multi-Group Queue): Dán danh sách KHÔNG GIỚI HẠN các nhóm Facebook, hệ thống tự động đăng tuần tự trong nền.
-     + Giãn cách thông minh (Smart Delay): Nghỉ ngẫu nhiên 90s - 180s giữa mỗi nhóm để chống khóa nick.
-     + Groq AI Micro-Spin: Tự động đổi nhẹ câu chào & icon cho từng bài nhưng giữ nguyên 100% diện tích, giá và SĐT.
-   - Bấm nút "Bắt đầu đăng" để hệ thống tự động xử lý.
+4. 3 CHẾ ĐỘ XUẤT BẢN ĐỈNH CAO:
+   - Chế độ A (Vét cạn nhóm - Khuyên dùng):
+     + Nhập link 1 nhóm gốc và từ khóa (Ví dụ: "Khai Sơn" hoặc để trống để chọn tất cả).
+     + Tự động tải ảnh lên trước, gõ nội dung, bấm "+ Thêm nhóm", tích chọn tối đa các nhóm chưa đăng và đăng đồng loạt.
+     + Tự động lặp lại cho đến khi đăng hết 100% số nhóm bạn đã tham gia.
+     + Giữa mỗi đợt tự động nghỉ giãn cách an toàn 90s - 180s và AI tự động biến tấu câu chào mở đầu (Micro-Spin) để chống spam Facebook.
+   - Chế độ B (Hàng đợi link nhóm độc lập):
+     + Dán danh sách nhiều link nhóm Facebook độc lập.
+     + Hệ thống tự động đăng lần lượt từng nhóm với giãn cách an toàn.
+   - Chế độ C (Lập lịch hẹn giờ tự động):
+     + Đặt lịch hẹn giờ đăng theo từng khung giờ trong ngày (ví dụ: 07:30, 10:00, 11:30, 14:00, 20:00...).
+     + Tiến trình chạy ngầm quét mỗi 60 giây và tự động kích hoạt đăng bài đúng giờ hẹn.
 
-5. ĐẶC ĐIỂM BẢN PORTABLE (MANG ĐI MÁY KHÁC):
-   - Bạn có thể nén ZIP hoặc chép toàn bộ thư mục "BDS_Studio_Portable" này sang USB hoặc máy tính Windows khác (Win 10, Win 11).
-   - MÁY TÍNH MỚI HOÀN TOÀN KHÔNG CẦN CÀI ĐẶT NODE.JS HOẶC BẤT KỲ CÔNG CỤ NÀO KHÁC (động cơ node.exe đã được nhúng sẵn bên trong runtime/).
+5. ĐẶC BIỆT DÀNH CHO KHÁCH HÀNG:
+   - ĐÂY LÀ BẢN PORTABLE HOÀN TOÀN: Khách hàng chỉ cần giải nén file ZIP ra bất kỳ thư mục nào trên máy tính là chạy được ngay.
+   - TUYỆT ĐỐI KHÔNG CẦN CÀI ĐẶT BẤT KỲ CÔNG CỤ NÀO (Không cần cài Node.js, Git, Python hay trình biên dịch nào khác).
+   - Toàn bộ dữ liệu, bài đăng, lịch hẹn và phiên đăng nhập Facebook được lưu trọn vẹn bên trong thư mục phần mềm.
 ==============================================================================
 `;
 fs.writeFileSync(path.join(portableDir, 'Huong_Dan_Su_Dung.txt'), readmeContent, 'utf8');
 
 // 6. Kiểm tra tính toàn vẹn của gói Portable
-console.log('\n[6/6] Kiểm tra tính toàn vẹn của bộ đóng gói Portable...');
+console.log('\n[6/7] Kiểm tra tính toàn vẹn của bộ đóng gói Portable...');
 try {
   const nodeVer = execSync(`"${targetNodeExe}" -v`, { encoding: 'utf8' }).trim();
   console.log(`       -> Động cơ nhúng hoạt động tốt: ${nodeVer}`);
@@ -232,9 +252,24 @@ try {
   console.error('       [!] Cảnh báo kiểm tra:', testErr.message);
 }
 
+// 7. Tự động đóng gói thành file ZIP sẵn sàng giao khách hàng
+console.log('\n[7/7] Đóng gói thành file BDS_Studio_Portable.zip giao khách hàng...');
+const zipFile = path.join(rootDir, 'BDS_Studio_Portable.zip');
+try {
+  if (fs.existsSync(zipFile)) {
+    fs.unlinkSync(zipFile);
+  }
+  execSync(`tar -a -c -f "${zipFile}" BDS_Studio_Portable`, { cwd: rootDir, stdio: 'inherit' });
+  const zipSizeMb = Math.round(fs.statSync(zipFile).size / (1024 * 1024));
+  console.log(`       -> Đã nén thành công file bàn giao: ${zipFile} (${zipSizeMb} MB).`);
+} catch (zipErr) {
+  console.warn('       [!] Cảnh báo nén zip:', zipErr.message);
+}
+
 console.log('\n==============================================================================');
 console.log('             ĐÓNG GÓI THÀNH CÔNG BỘ BĐS STUDIO PORTABLE 1-CLICK!               ');
 console.log('==============================================================================');
-console.log('Thư mục đầu ra: ' + portableDir);
-console.log('Để chạy thử: Nhấp đúp vào "Khoi_Dong_BDS_Studio.vbs" hoặc "Chay_BDS_Studio.bat".');
+console.log('Thư mục Portable: ' + portableDir);
+console.log('File ZIP bàn giao: ' + zipFile);
+console.log('Khách hàng chỉ cần giải nén và nhấp đúp: "Khoi_Dong_BDS_Studio.vbs".');
 console.log('==============================================================================\n');
